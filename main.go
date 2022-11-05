@@ -65,8 +65,8 @@ func main() {
 	log.Printf("Current date is %v", now)
 	log.Printf("%d month cutoff is %v", months, before)
 
-	// Traverse mailboxes 
-	log.Printf("Processing %d mailboxes ...", len(folderNames))
+	// Traverse folders 
+	log.Printf("Processing %d folders ...", len(folderNames))
 	for _,f := range folderNames {
 		deleteMessagesBefore(c, f, before)
 	}
