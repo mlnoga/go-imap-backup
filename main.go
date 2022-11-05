@@ -81,14 +81,14 @@ func main() {
 
 	// Determine cutoff time based on given number of months
 	now:=time.Now()
-	cutoff:=now.AddDate(0, -months, 0) // n months back
-	log.Printf("Current date is %v, archiving messages older than %d months i.e. before %v",
-	           now, months, cutoff)
+	before:=now.AddDate(0, -months, 0) // n months back
+	log.Printf("Current date is %v", now)
+	log.Printf("%d month cutoff is %v", months, before)
 
 	// Traverse mailboxes 
 	log.Printf("Processing %d mailboxes ...", len(folderNames))
 	for _,f := range folderNames {
-		processFolder(c, f, cutoff)
+		deleteMessagesBefore(c, f, before)
 	}
 
 	log.Println("Done, exiting.")
@@ -136,33 +136,41 @@ func processFlags() {
 }
 
 
-func processFolder(c *client.Client, f string, cutoff time.Time) {
-	log.Println("- Opening folder " + f)
-	mbox, err := c.Select(f, false)
+func deleteMessagesBefore(c *client.Client, folderName string, before time.Time) {
+	log.Println("- Opening folder " + folderName)
+	mbox, err := c.Select(folderName, false)
 	if err != nil {
 		log.Fatal(err)
 	}
 	log.Printf("  - Folder has %d messages, %d new and %d unread.\n", 
 		       mbox.Messages, mbox.Recent, mbox.Unseen)
 
-	if mbox.Messages>0 {
-		log.Printf("  - Searching messages older than %v: ", cutoff)
-
-		ids := findMessagesOlderThan(c, cutoff)
-		log.Printf("  - Found %d messages", len(ids))
-		if len(ids)==0 {
-			return
-		}
-
-		log.Printf("  - Deleting %d messsages ...", len(ids))
-		deleteMessages(c, ids)
+	if mbox.Messages==0 {
+		return
 	}
+
+	log.Printf("  - Finding messages before %v ...", before)
+	ids := findMessagesBefore(c, before)
+	log.Printf("  - Found %d messages", len(ids))
+	if len(ids)==0 {
+		return
+	}
+
+	log.Printf("  - Deleting %d messsages ...", len(ids))
+	deleteMessages(c, ids)
+
+	mbox, err = c.Select(folderName, false)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("  - Folder has %d messages, %d new and %d unread.\n", 
+		       mbox.Messages, mbox.Recent, mbox.Unseen)
 }
 
 
-func findMessagesOlderThan(c *client.Client, date time.Time) []uint32 {
+func findMessagesBefore(c *client.Client, before time.Time) []uint32 {
 	criteria:=imap.NewSearchCriteria()
-	criteria.Before=date
+	criteria.Before=before
 	ids, err := c.Search(criteria)
 	if err!=nil {
 		log.Fatal(err)
@@ -171,7 +179,7 @@ func findMessagesOlderThan(c *client.Client, date time.Time) []uint32 {
 }
 
 
-func deleteMessages (c *client.Client, ids []uint32) {
+func deleteMessages(c *client.Client, ids []uint32) {
 	seqset := new(imap.SeqSet)
 	seqset.AddNum(ids...)
 
