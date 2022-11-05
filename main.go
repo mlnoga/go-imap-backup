@@ -57,27 +57,7 @@ func main() {
 	}
 	log.Println("Logged in")
 
-	// Query list of mailboxes
-	mailboxesCh := make(chan *imap.MailboxInfo, 10)
-	done := make(chan error, 1)
-	go func () {
-		done <- c.List("", "*", mailboxesCh)
-	}()
-
-	// Collect results and print 
-	mailboxes:=[]string{}
-	for m := range mailboxesCh {
-		mailboxes=append(mailboxes, m.Name)
-	}
-	sort.Strings(mailboxes)
-
-	log.Printf("Found %d mailboxes:\n", len(mailboxes))
-	for _,m :=range mailboxes {
-		log.Printf("- %s\n", m)
-	}
-	if err := <-done; err != nil {
-		log.Fatal(err)
-	}
+	listFolders(c)
 
 	// Determine cutoff time based on given number of months
 	now:=time.Now()
@@ -132,6 +112,32 @@ func processFlags() {
 		}
 		pass=string(p)
 		fmt.Println()
+	}
+}
+
+
+func listFolders(c *client.Client) {
+	log.Printf("Fetching folder list...")
+	// Query list of folders
+	mailboxesCh := make(chan *imap.MailboxInfo, 10)
+	done := make(chan error, 1)
+	go func () {
+		done <- c.List("", "*", mailboxesCh)
+	}()
+
+	// Collect results and print 
+	mailboxes:=[]string{}
+	for m := range mailboxesCh {
+		mailboxes=append(mailboxes, m.Name)
+	}
+	sort.Strings(mailboxes)
+
+	log.Printf("Found %d folders:\n", len(mailboxes))
+	for _,m :=range mailboxes {
+		log.Printf("- %s\n", m)
+	}
+	if err := <-done; err != nil {
+		log.Fatal(err)
 	}
 }
 
