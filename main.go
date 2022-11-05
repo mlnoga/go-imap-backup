@@ -55,7 +55,7 @@ func main() {
 	if err := c.Login(user, pass); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("Logged in\n")
+	log.Println("Logged in")
 
 	// Query list of mailboxes
 	mailboxesCh := make(chan *imap.MailboxInfo, 10)
@@ -96,12 +96,12 @@ func main() {
 
 func processFlags() {
 	flag.StringVar(&server, "s", "",  "IMAP server name")
-	flag.IntVar   (&port,   "p", 993, "IMAP port name")
+	flag.IntVar   (&port,   "p", 993, "IMAP port number")
 	flag.StringVar(&user,   "u", "",  "IMAP user name")
 	flag.StringVar(&pass,   "P", "",  "IMAP password. Really, consider entering this into stdin")
 	var folderNamesSeparated string
 	flag.StringVar(&folderNamesSeparated, "f", "INBOX,INBOX.Drafts,INBOX.Sent,INBOX.Spam,INBOX.Trash", "Comma-separated list of folders to work on")
-	flag.IntVar   (&months, "m", 24,  "Archive messages n months older than today")	
+	flag.IntVar   (&months, "m", 24,  "Delete messages older than this amount of months")	
 	flag.Parse()
 	folderNames=strings.Split(folderNamesSeparated,",")
 
