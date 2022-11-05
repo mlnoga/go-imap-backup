@@ -147,64 +147,33 @@ func processFolder(c *client.Client, f string, cutoff time.Time) {
 
 	if mbox.Messages>0 {
 		log.Printf("  - Searching messages older than %v: ", cutoff)
-		id, ok:=findYoungestMessageOlderOrEqualThan(c, mbox.Messages, cutoff)
-		if !ok {
-			log.Printf("  - No such messages found\n")
+
+		ids := findMessagesOlderThan(c, cutoff)
+		log.Printf("  - Found %d messages", len(ids))
+		if len(ids)==0 {
 			return
 		}
-		log.Printf("  - Deleting messsages [1,%d] ...", id)
-		deleteMessageRange(c, 1, id)
+
+		log.Printf("  - Deleting %d messsages ...", len(ids))
+		deleteMessages(c, ids)
 	}
 }
 
 
-func findYoungestMessageOlderOrEqualThan(c *client.Client, numMsgs uint32, date time.Time) (id uint32, ok bool) {
-	left  := uint32(1)
-	right := numMsgs
-
-	for left < right {
-		middle := (left + right + 1) / 2
-		midMsg := fetchMessageByIndex(c, middle)
-		midDate:= midMsg.Envelope.Date
-
-		// fmt.Printf("[%d,%d] mid %d date %v subject %s\n", left, right, middle, midDate, midMsg.Envelope.Subject)
-
-		if midDate.After(date) {
-			right = middle - 1
-		} else {
-			left = middle
-		}
-	}
-
-	msg:=fetchMessageByIndex(c, left)	
-	if msg.Envelope.Date.After(date) {
-		return 0, false
-	}
-	return left, true
-}
-
-
-func fetchMessageByIndex(c *client.Client, id uint32) *imap.Message {
-	seqset := new(imap.SeqSet)
-	seqset.AddRange(id, id)
-
-	messages := make(chan *imap.Message, 10)
-	done := make(chan error, 1)
-	go func() {
-		done <- c.Fetch(seqset, []imap.FetchItem{imap.FetchEnvelope}, messages)
-	}()
-
-	if err := <-done; err != nil {
+func findMessagesOlderThan(c *client.Client, date time.Time) []uint32 {
+	criteria:=imap.NewSearchCriteria()
+	criteria.Before=date
+	ids, err := c.Search(criteria)
+	if err!=nil {
 		log.Fatal(err)
 	}
-
-	return <- messages
+	return ids
 }
 
 
-func deleteMessageRange (c *client.Client, from, to uint32) {
+func deleteMessages (c *client.Client, ids []uint32) {
 	seqset := new(imap.SeqSet)
-	seqset.AddRange(from, to)
+	seqset.AddNum(ids...)
 
 	item:=imap.FormatFlagsOp(imap.AddFlags, true)			
 	flags:=[]interface{}{imap.DeletedFlag}
