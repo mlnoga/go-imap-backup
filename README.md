@@ -2,6 +2,11 @@
 
 Backs up messages from an IMAP server, optionally deleting older messages.
 
+Backups are stored locally in one mbox file for each folder on the server, named `folder.mbox`. The contents of the mbox file are indexed in the corresponding file `folder.idx`.
+
+Newly identified messages on the server are appended to the mbox file. Messages deleted from the server are not removed from the mbox file, because it is intended to function as a permanent archive.
+
+
 ## Command-line flags
 
 | Flag  | Description         | Default             |
@@ -11,7 +16,7 @@ Backs up messages from an IMAP server, optionally deleting older messages.
 | -u    | IMAP user name      | (read from console) |
 | -P    | IMAP password       | (read from console) |
 | -f    | Comma-separated list of folders | INBOX,INBOX.Drafts,INBOX.Sent,INBOX.Spam,INBOX.Trash | 
-| -m    | Age limit in months | -1 (do not delete messages | 
+| -m    | Age limit in months | -1 (do not delete messages) | 
 
 
 ## License
