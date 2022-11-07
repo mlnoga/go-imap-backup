@@ -1,2 +1,4 @@
 go-imap-deleter
 go-imap-deleter.exe
+*.mbox
+*.idx

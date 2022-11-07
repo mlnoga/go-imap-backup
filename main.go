@@ -17,19 +17,35 @@
 package main
 
 import (
-	"log"
-	"github.com/emersion/go-imap/client"
-	"github.com/emersion/go-imap"
-	"fmt"
-	"os"
 	"bufio"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"math"
+	"os"
+	"sort"
 	"strings"
 	"time"
-	"sort"
-	"flag"
 	"golang.org/x/term"
+	"github.com/emersion/go-imap"
+	"github.com/emersion/go-imap/client"
 )
 
+// Metadata for an email message on IMAP server or in a local .mbox file
+type MsgMetaData struct {
+	SeqNum      uint32   // sequence number >=1 on IMAP server, or 0 if unknown
+    UidValidity uint32
+    Uid         uint32
+	Size        uint32
+	Offset      uint64   // offset in bytes in local .mbox file, or math.MaxUint64 if unknown
+}
+
+func (md *MsgMetaData) GetUuid() uint64 {
+	return (uint64(md.UidValidity)<<32) | uint64(md.Uid)
+}
+
+// command line flag values
 var server        string
 var port          int
 var user          string
@@ -57,18 +73,32 @@ func main() {
 	}
 	log.Println("Logged in")
 
-	listFolders(c)
-
-	// Determine cutoff time based on given number of months
-	now:=time.Now()
-	before:=now.AddDate(0, -months, 0) // n months back
-	log.Printf("Current date is %v", now)
-	log.Printf("%d month cutoff is %v", months, before)
+	if folderNames==nil || (len(folderNames)==1 && folderNames[0]=="") {
+		folderNames=listFolders(c)
+	}
 
 	// Traverse folders 
 	log.Printf("Processing %d folders ...", len(folderNames))
-	for _,f := range folderNames {
-		deleteMessagesBefore(c, f, before)
+	for _,folderName := range folderNames {
+		mds, _:=fetchMsgMetaData(c, folderName)
+
+		// Retrieve and locally back up messages
+		mdsMap, uidValidity:=readMailboxIndex(folderName)
+		log.Printf("  - %d messages in local backup, last UidValidity %d", len(mdsMap), uidValidity)
+		mdsNew, size:=filterNewMsgMetaData(mds, mdsMap)
+		log.Printf("  - %d new messages with %s to be added", 
+			       len(mdsNew), humanReadableSize(size))
+		downloadAndSaveMessages(c, mdsNew, folderName)
+
+		// Optionally delete older messages
+		if months>0 {
+			now:=time.Now()
+			before:=now.AddDate(0, -months, 0) // n months back
+			ymd:="2006-01-02"
+			log.Printf("Today is %s, before %d months was %s", 
+				        now.Format(ymd), months, before.Format(ymd)) 
+			//deleteMessagesBefore(c, f, before)
+		}
 	}
 
 	log.Println("Done, exiting.")
@@ -81,7 +111,7 @@ func processFlags() {
 	flag.StringVar(&pass,   "P", "",  "IMAP password. Really, consider entering this into stdin")
 	var folderNamesSeparated string
 	flag.StringVar(&folderNamesSeparated, "f", "INBOX,INBOX.Drafts,INBOX.Sent,INBOX.Spam,INBOX.Trash", "Comma-separated list of folders to work on")
-	flag.IntVar   (&months, "m", 24,  "Delete messages older than this amount of months")	
+	flag.IntVar   (&months, "m", -1,  "Delete messages older than this amount of months, if >=0")	
 	flag.Parse()
 	folderNames=strings.Split(folderNamesSeparated,",")
 
@@ -116,7 +146,7 @@ func processFlags() {
 }
 
 
-func listFolders(c *client.Client) {
+func listFolders(c *client.Client) []string {
 	log.Printf("Fetching folder list...")
 	// Query list of folders
 	mailboxesCh := make(chan *imap.MailboxInfo, 10)
@@ -139,8 +169,195 @@ func listFolders(c *client.Client) {
 	if err := <-done; err != nil {
 		log.Fatal(err)
 	}
+	return mailboxes
 }
 
+
+func fetchMsgMetaData(c *client.Client, folderName string) (mds []MsgMetaData, uidValidity uint32) {
+	log.Println("- Opening folder " + folderName)
+	mbox, err := c.Select(folderName, false)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("  - Folder has %d messages, UID validity %d.\n", mbox.Messages, mbox.UidValidity)
+	if mbox.Messages==0 {
+		return nil, mbox.UidValidity
+	}
+
+	seqset := new(imap.SeqSet)
+	seqset.AddRange(1, mbox.Messages)
+	items  := []imap.FetchItem{imap.FetchUid, imap.FetchRFC822Size}
+
+	messages := make(chan *imap.Message, 16)
+	done := make(chan error, 1)
+	go func() {
+	    done <- c.Fetch(seqset, items, messages)
+	}()
+
+	messageDigests:=[]MsgMetaData{}
+	totalSize:=uint64(0)
+	for msg := range messages {
+		d:=MsgMetaData{SeqNum: msg.SeqNum, UidValidity: mbox.UidValidity, Uid: msg.Uid, Size: msg.Size, Offset: math.MaxUint64}
+		messageDigests=append(messageDigests, d)
+		totalSize+=uint64(msg.Size)
+	}
+	log.Printf("  - Found %d id/uid pairs, size on server %s", len(messageDigests), humanReadableSize(totalSize))
+	if err := <-done; err != nil {
+		log.Fatal(err)
+	}
+
+	return messageDigests, mbox.UidValidity
+}
+
+
+// Read mailbox index file and return a map of 64-bit message IDs to message metadata
+func readMailboxIndex(folderName string) (res map[uint64]MsgMetaData, uidValidity uint32) {
+	res=make(map[uint64]MsgMetaData)
+
+	// open input file readonly
+	fileName:=folderName+".idx"
+	f, err:=os.Open(fileName)
+	if err!=nil {
+		log.Printf("%s: %s", fileName, err.Error())
+		return res, 0
+	}
+	defer f.Close()
+
+	// read line by line
+	lineNo:=1
+	s:=bufio.NewScanner(f)
+	for s.Scan() {
+		line:=s.Text() // without terminating newline
+
+		// split line into fields
+		md:=MsgMetaData{SeqNum:0, Offset: math.MaxUint64}
+		_,err:=fmt.Sscanf(line, "%d\t%d\t%d\t%d", 
+		                  &md.UidValidity, &md.Uid, &md.Size, &md.Offset)
+		if err!=nil {
+			log.Fatalf("%s:%d: %s", fileName, lineNo, err.Error())
+		}
+		uidValidity=md.UidValidity
+
+		// insert into results map
+		res[md.GetUuid()]=md
+		lineNo++
+	}
+	if err:=s.Err(); err!=nil {
+		log.Fatalf("%s:%d: %s", fileName, lineNo, err.Error())
+	}
+
+	return res, uidValidity
+}
+
+
+func filterNewMsgMetaData(mds []MsgMetaData, lookup map[uint64]MsgMetaData) (res []MsgMetaData, size uint64) {
+	res=[]MsgMetaData{}
+	size=0
+	for _, md := range(mds) {
+		if _,ok :=lookup[md.GetUuid()]; !ok {
+			res=append(res, md)
+			size+=uint64(md.Size)
+		}
+	}
+	return res, size
+}
+
+func downloadAndSaveMessages(c *client.Client, mds []MsgMetaData, folderName string) {
+	if len(mds)==0 {
+		return
+	}
+
+	// open mailbox file for appending
+	mboxName:=folderName+".mbox"
+	mbox, err:=os.OpenFile(mboxName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err!=nil {
+		log.Fatal(err)
+	}
+	defer mbox.Close()
+
+	// open mailbox index file for appending
+	idxName:=folderName+".idx"
+	idx, err:=os.OpenFile(idxName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err!=nil {
+		log.Fatal(err)
+	}
+	defer idx.Close()
+	idxWriter:=bufio.NewWriter(idx)
+	defer idxWriter.Flush()
+
+	// prepare sequence set and trigger download of messages
+	totalSize:=uint64(0)
+	seqset := new(imap.SeqSet)
+	for _,md:=range(mds) {
+		seqset.AddNum(md.SeqNum)
+		totalSize+=uint64(md.Size)
+	}
+	uidValidity:=mds[0].UidValidity
+
+	section := &imap.BodySectionName{}
+	items := []imap.FetchItem{imap.FetchUid, imap.FetchRFC822Size, imap.FetchEnvelope, section.FetchItem()}	
+
+	log.Printf("  - Fetching %d messages with %s ...", len(mds), humanReadableSize(totalSize))
+	messages := make(chan *imap.Message, 16)
+	done := make(chan error, 1)
+	go func() {
+	    done <- c.Fetch(seqset, items, messages)
+	}()
+
+	// process messages received
+	numReceived:=0
+	sizeReceived:=uint64(0)
+	for msg := range messages {
+		// print progress
+		numReceived++
+		sizeReceived+=uint64(msg.Size)
+		log.Printf("    - Msg %d/%d (%.1f%%), Data %s/%s (%.1f%%)", 
+				   numReceived, len(mds), 100*float64(numReceived)/float64(len(mds)),
+				   humanReadableSize(sizeReceived), humanReadableSize(totalSize), 
+				   100*float64(sizeReceived)/float64(totalSize) )
+		
+		// read message into memory
+		r := msg.GetBody(section)
+		if r == nil {
+		    log.Fatal("Server didn't return message body")
+		}
+		bs, err:=io.ReadAll(r)
+		if err!=nil {
+		    log.Fatal(err)
+		}
+
+		// write header into mbox file
+		header:=fmt.Sprintf("From %s %s\n", msg.Envelope.From[0].Address(), msg.Envelope.Date.UTC().Format(time.ANSIC))
+		_,err=fmt.Fprintf(mbox,"%s", header)
+		if err!=nil {
+		    log.Fatal(err)
+		}
+
+		// retrieve current mbox file size in bytes, for storing in index file
+		pos, err:=mbox.Seek(0, os.SEEK_CUR)
+		if err!=nil {
+		    log.Fatal(err)
+		}
+
+		// write message body into mbox file
+		_, err=mbox.Write(bs)
+		if err!=nil {
+		    log.Fatal(err)
+		}
+
+		// write separating blank line into mbox file
+		_,err=fmt.Fprintf(mbox,"\n")
+		if err!=nil {
+		    log.Fatal(err)
+		}
+
+		// write corresponding index record to idx file
+		fmt.Fprintf(idxWriter, "%d\t%d\t%d\t%d\n", uidValidity, msg.Uid, len(bs), pos)
+	}
+	if err := <-done; err != nil {
+		log.Fatal(err)
+	}
+}
 
 func deleteMessagesBefore(c *client.Client, folderName string, before time.Time) {
 	log.Println("- Opening folder " + folderName)
@@ -148,9 +365,7 @@ func deleteMessagesBefore(c *client.Client, folderName string, before time.Time)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("  - Folder has %d messages, %d new and %d unread.\n", 
-		       mbox.Messages, mbox.Recent, mbox.Unseen)
-
+	log.Printf("  - Folder has %d messages, UID validity %d.\n", mbox.Messages, mbox.UidValidity)
 	if mbox.Messages==0 {
 		return
 	}
@@ -169,8 +384,7 @@ func deleteMessagesBefore(c *client.Client, folderName string, before time.Time)
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("  - Folder has %d messages, %d new and %d unread.\n", 
-		       mbox.Messages, mbox.Recent, mbox.Unseen)
+	log.Printf("  - Folder has %d messages, UID validity %d.\n", mbox.Messages, mbox.UidValidity)
 }
 
 
@@ -197,5 +411,28 @@ func deleteMessages(c *client.Client, ids []uint32) {
 
 	if err:=c.Expunge(nil); err!= nil {
 		log.Fatal(err)
+	}
+}
+
+
+func humanReadableSize(n uint64) string {
+	if n<1024 { 
+		return fmt.Sprintf("%d B", n) 
+	} else if n<10*1024 {
+		return fmt.Sprintf("%.1f KB", float64(n)/1024) 
+	} else if n<1024*1024 {
+		return fmt.Sprintf("%d KB", n/1024) 
+	} else if n<10*1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(n)/1024/1024) 
+	} else if n<1024*1024*1024 {
+		return fmt.Sprintf("%d MB", n/1024/1024) 
+	} else if n<10*1024*1024*1024 {
+		return fmt.Sprintf("%.1f GB", float64(n)/1024/1024/1024) 
+	} else if n<1024*1024*1024*1024 {
+		return fmt.Sprintf("%d GB", n/1024/1024/1024) 
+	} else if n<10*1024*1024*1024*1024 {
+		return fmt.Sprintf("%.1f TB", float64(n)/1024/1024/1024/1024) 
+	} else {
+		return fmt.Sprintf("%d TB", n/1024/1024/1024/1024) 
 	}
 }
