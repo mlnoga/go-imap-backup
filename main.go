@@ -30,6 +30,7 @@ import (
 	"golang.org/x/term"
 	"github.com/emersion/go-imap"
 	"github.com/emersion/go-imap/client"
+	progressbar "github.com/schollz/progressbar/v3"
 )
 
 // Metadata for an email message on IMAP server or in a local .mbox file
@@ -218,7 +219,7 @@ func readMailboxIndex(folderName string) (res map[uint64]MsgMetaData, uidValidit
 	fileName:=folderName+".idx"
 	f, err:=os.Open(fileName)
 	if err!=nil {
-		log.Printf("%s: %s", fileName, err.Error())
+		// silently return blank list if file does not exist
 		return res, 0
 	}
 	defer f.Close()
@@ -297,7 +298,7 @@ func downloadAndSaveMessages(c *client.Client, mds []MsgMetaData, folderName str
 	section := &imap.BodySectionName{}
 	items := []imap.FetchItem{imap.FetchUid, imap.FetchRFC822Size, imap.FetchEnvelope, section.FetchItem()}	
 
-	log.Printf("  - Fetching %d messages with %s ...", len(mds), humanReadableSize(totalSize))
+	bar := progressbar.DefaultBytes(int64(totalSize), folderName)
 	messages := make(chan *imap.Message, 16)
 	done := make(chan error, 1)
 	go func() {
@@ -305,16 +306,9 @@ func downloadAndSaveMessages(c *client.Client, mds []MsgMetaData, folderName str
 	}()
 
 	// process messages received
-	numReceived:=0
-	sizeReceived:=uint64(0)
 	for msg := range messages {
 		// print progress
-		numReceived++
-		sizeReceived+=uint64(msg.Size)
-		log.Printf("    - Msg %d/%d (%.1f%%), Data %s/%s (%.1f%%)", 
-				   numReceived, len(mds), 100*float64(numReceived)/float64(len(mds)),
-				   humanReadableSize(sizeReceived), humanReadableSize(totalSize), 
-				   100*float64(sizeReceived)/float64(totalSize) )
+		bar.Add64(int64(msg.Size))
 		
 		// read message into memory
 		r := msg.GetBody(section)
