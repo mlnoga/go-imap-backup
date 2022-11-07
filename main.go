@@ -1,5 +1,5 @@
-// go-imap-deleter (C) 2022 by Markus L. Noga
-// Connect to an IMAP server and delete older messages
+// go-imap-backup (C) 2022 by Markus L. Noga
+// Backup messages from an IMAP server, optionally deleting older messages
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by

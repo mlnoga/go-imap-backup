@@ -1,4 +1,4 @@
-module github.com/mlnoga/go-imap-deleter
+module github.com/mlnoga/go-imap-backup
 
 go 1.17
 
