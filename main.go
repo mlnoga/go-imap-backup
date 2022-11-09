@@ -37,6 +37,7 @@ var pass string
 var restrictToFoldersSeparated string
 var restrictToFolderNames []string
 var months int
+var force bool
 
 func init() {
 	flag.Usage = func() {
@@ -49,7 +50,8 @@ func init() {
 	flag.StringVar(&user, "u", "", "IMAP user name")
 	flag.StringVar(&pass, "P", "", "IMAP password. Really, consider entering this into stdin")
 	flag.StringVar(&restrictToFoldersSeparated, "r", "", "Restrict command to a comma-separated list of folders")
-	flag.IntVar(&months, "m", -1, "Delete messages older than this amount of months, if >=0")
+	flag.IntVar(&months, "m", 24, "Delete messages older than this amount of months")
+	flag.BoolVar(&force, "f", false, "Force deletion of older messages without confirmation prompt")
 }
 
 func main() {
@@ -119,8 +121,12 @@ func main() {
 	fmt.Println("Done, exiting.")
 }
 
-// Prompt for missing parameters not present as command line flags (e.g. password)
+// Validate command line flags and prompt for missing parameters (e.g. password)
 func completeFlags() (err error) {
+	if months <= 0 {
+		return fmt.Errorf("Months must be positive, is %d", months)
+	}
+
 	restrictToFolderNames = strings.Split(restrictToFoldersSeparated, ",")
 	if len(restrictToFolderNames) == 1 && restrictToFolderNames[0] == "" {
 		restrictToFolderNames = nil
@@ -250,8 +256,19 @@ func cmdDelete(c *client.Client, folderNames []string) {
 	now := time.Now()
 	before := now.AddDate(0, -months, 0) // n months back
 	ymd := "2006-01-02"
-	fmt.Printf("Today is %s, deleting messages %d months or older, so on or before %s",
+	fmt.Printf("Today is %s, deleting messages %d months or older, so on or before %s.\n",
 		now.Format(ymd), months, before.Format(ymd))
+
+	if !force {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Printf("Are you sure [y/n]: ")
+		yn, _ := reader.ReadString('\n')
+		yn = strings.TrimSpace(yn)
+		if yn != "y" && yn != "Y" {
+			fmt.Println("User did not confirm, aborting.")
+			return
+		}
+	}
 
 	bar := pb.Default(int64(len(folderNames)), "Delete")
 	totalDeleted := int64(0)
@@ -268,43 +285,4 @@ func cmdDelete(c *client.Client, folderNames []string) {
 	}
 
 	fmt.Printf("Total %d message deleted\n", totalDeleted)
-}
-
-// Returns a slice of all strings which are in as and bs, in stable order of as
-func intersect(as []string, bs []string) []string {
-	have := make(map[string]bool)
-	for _, b := range bs {
-		have[b] = true
-	}
-	cs := []string{}
-	for _, a := range as {
-		if _, ok := have[a]; ok {
-			cs = append(cs, a)
-		}
-	}
-	return cs
-}
-
-// Print a given size in bytes as a human-readable string
-// using KB, MB, GB, TB as appropriate.
-func humanReadableSize(n uint64) string {
-	if n < 1024 {
-		return fmt.Sprintf("%d B", n)
-	} else if n < 10*1024 {
-		return fmt.Sprintf("%.1f KB", float64(n)/1024)
-	} else if n < 1024*1024 {
-		return fmt.Sprintf("%d KB", n/1024)
-	} else if n < 10*1024*1024 {
-		return fmt.Sprintf("%.1f MB", float64(n)/1024/1024)
-	} else if n < 1024*1024*1024 {
-		return fmt.Sprintf("%d MB", n/1024/1024)
-	} else if n < 10*1024*1024*1024 {
-		return fmt.Sprintf("%.1f GB", float64(n)/1024/1024/1024)
-	} else if n < 1024*1024*1024*1024 {
-		return fmt.Sprintf("%d GB", n/1024/1024/1024)
-	} else if n < 10*1024*1024*1024*1024 {
-		return fmt.Sprintf("%.1f TB", float64(n)/1024/1024/1024/1024)
-	} else {
-		return fmt.Sprintf("%d TB", n/1024/1024/1024/1024)
-	}
 }

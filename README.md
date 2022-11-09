@@ -1,13 +1,21 @@
 # go-imap-backup
 
-Backs up messages from an IMAP server, optionally deleting older messages.
+Backs up messages from an IMAP server to local files, optionally deleting older messages.
 
-Backups are stored locally in one mbox file for each folder on the server, named `folder.mbox`. The contents of the mbox file are indexed in the corresponding file `folder.idx`.
+Backups are stored locally in a directory `server/user/`, which is created if necessary. For each folder on the server, the directory contains a mailbox file named `folder.mbox`, and an index of the messages therein in a file called `folder.idx`. 
 
 Newly identified messages on the server are appended to the mbox file. Messages deleted from the server are not removed from the mbox file, because it is intended to function as a permanent archive.
 
 
-## Command-line flags
+## Usage
+
+`go-imap-backup [-flags] command` where commands are:
+
+* `query` retrieves a summary of the messages on the server, and takes no further action
+* `backup` retrieves new messages from the server, and appends them to the local backup folders
+* `delete` removes messages older than the given amount of months from the server
+
+The corresponding flags are:
 
 | Flag  | Description         | Default             |
 |-------|---------------------|---------------------|
@@ -15,9 +23,9 @@ Newly identified messages on the server are appended to the mbox file. Messages 
 | -p    | IMAP port address   | 993                 |
 | -u    | IMAP user name      | (read from console) |
 | -P    | IMAP password       | (read from console) |
-| -f    | Comma-separated list of folders | INBOX,INBOX.Drafts,INBOX.Sent,INBOX.Spam,INBOX.Trash | 
-| -m    | Age limit in months | -1 (do not delete messages) | 
-
+| -f    | Force deletion without confirmation prompt | false |
+| -m    | Age limit for deletion in months, must be positive | 24 | 
+| -r    | Restrict to comma-separated list of folders | (blank) | 
 
 ## License
 
