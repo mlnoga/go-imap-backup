@@ -26,6 +26,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 )
 
 // command line flag values
@@ -33,11 +34,33 @@ var server string
 var port int
 var user string
 var pass string
-var folderNames []string
+var restrictToFoldersSeparated string
+var restrictToFolderNames []string
 var months int
 
+func init() {
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Usage: go-imap-backup [-flags] [query|backup|delete]")
+		flag.PrintDefaults()
+	}
+
+	flag.StringVar(&server, "s", "", "IMAP server name")
+	flag.IntVar(&port, "p", 993, "IMAP port number")
+	flag.StringVar(&user, "u", "", "IMAP user name")
+	flag.StringVar(&pass, "P", "", "IMAP password. Really, consider entering this into stdin")
+	flag.StringVar(&restrictToFoldersSeparated, "r", "", "Restrict command to a comma-separated list of folders")
+	flag.IntVar(&months, "m", -1, "Delete messages older than this amount of months, if >=0")
+}
+
 func main() {
-	if err := processFlags(); err != nil {
+	// parse command-line arguments
+	flag.Parse()
+	args := flag.Args()
+	if len(args) != 1 || (args[0] != "query" && args[0] != "backup" && args[0] != "delete") {
+		flag.Usage()
+		return
+	}
+	if err := completeFlags(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -68,7 +91,7 @@ func main() {
 
 	// List folders
 	bar.Describe("List folders")
-	folderNames, err = ListFolders(c)
+	folderNames, err := ListFolders(c)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,15 +99,80 @@ func main() {
 		log.Fatal(err)
 	}
 
+	// Restrict if necessary
+	if len(restrictToFolderNames) > 0 {
+		folderNames = intersect(folderNames, restrictToFolderNames)
+	}
+
+	// Execute given command
+	switch args[0] {
+	case "query":
+		cmdQuery(c, folderNames)
+
+	case "backup":
+		cmdBackup(c, folderNames)
+
+	case "delete":
+		cmdDelete(c, folderNames)
+	}
+
+	fmt.Println("Done, exiting.")
+}
+
+// Prompt for missing parameters not present as command line flags (e.g. password)
+func completeFlags() (err error) {
+	restrictToFolderNames = strings.Split(restrictToFoldersSeparated, ",")
+	if len(restrictToFolderNames) == 1 && restrictToFolderNames[0] == "" {
+		restrictToFolderNames = nil
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+	if server == "" {
+		fmt.Printf("IMAP server: ")
+		server, _ = reader.ReadString('\n')
+		server = strings.TrimSpace(server)
+	}
+	if user == "" {
+		fmt.Printf("Username: ")
+		user, _ = reader.ReadString('\n')
+		user = strings.TrimSpace(user)
+	}
+	if pass == "" {
+		fmt.Printf("Password: ")
+		// Read password from terminal without echoing it
+		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil {
+			return err
+		}
+		defer func() {
+			if dErr := term.Restore(int(os.Stdin.Fd()), oldState); dErr != nil {
+				if err == nil {
+					err = dErr
+				}
+			}
+		}()
+
+		t := term.NewTerminal(os.Stdin, "")
+		p, err := t.ReadPassword("")
+		if err != nil {
+			return err
+		}
+		pass = string(p)
+		fmt.Println()
+	}
+	return nil
+}
+
+func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta, filteredMsgs int, filteredSize uint64) {
 	// Process all folders
-	bar = pb.Default(int64(len(folderNames)), "List")
-	folders := make([]*ImapFolderMeta, len(folderNames))
+	bar := pb.Default(int64(len(folderNames)), "List")
+	folders = make([]*ImapFolderMeta, len(folderNames))
 	totalMsgs, totalSize := 0, uint64(0)
-	filteredMsgs, filteredSize := 0, uint64(0)
 	for i, folderName := range folderNames {
 		bar.Describe("List " + folderName)
 
 		// Fetch metadata for all messages in the folder
+		var err error
 		folders[i], err = NewImapFolderMeta(c, folderName)
 		if err != nil {
 			log.Fatal(err)
@@ -122,105 +210,79 @@ func main() {
 	}
 	fmt.Println()
 
-	// Download and append any new messages to local folder storage
-	if filteredMsgs > 0 {
-		bar = pb.DefaultBytes(int64(filteredSize), "Download")
-		for _, f := range folders {
-			if len(f.Messages) == 0 {
-				continue
-			}
-			bar.Describe("Download " + f.Name)
-
-			// Open local mbox file and index file for appending
-			lf, err := OpenLocalFolderAppend(server, user, f.Name)
-			if err != nil {
-				log.Fatal(err)
-			}
-			defer lf.Close()
-
-			// Download and store messages
-			err = f.DownloadTo(c, lf, bar)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-	}
-
-	//	if folderNames==nil || (len(folderNames)==1 && folderNames[0]=="") {
-	//		folderNames=listFolders(c)
-	//	}
-
-	// Optionally delete older messages
-	// if months>0 {
-	// 	now:=time.Now()
-	// 	before:=now.AddDate(0, -months, 0) // n months back
-	// 	ymd:="2006-01-02"
-	// 	fmt.Printf("Today is %s, deleting messages older than %d months, i.e. %s or earlier",
-	// 		        now.Format(ymd), months, before.Format(ymd))
-
-	// 	bar=pb.DefaultBytes(len(folders), "Delete")
-	// 	totalDeleted:=int64(0)
-	// 	for f := range folders {
-	// 		bar.Describe("Delete "+f.Name)
-	// 		numDeleted, err:=DeleteMessagesBefore(c, f.Name, before)
-	//      if err!=nil { log.Fatal(err) }
-	//      totalDeleted+=int64(numDeleted)
-	// 		bar.Add(1)
-	// 	}
-	//  fmt.Printf("Total %d message deleted\n", totalDeleted)
-	// }
-
-	fmt.Println("Done, exiting.")
+	return folders, filteredMsgs, filteredSize
 }
 
-// Process command line flags with sensible defaults,
-// prompting for missing required values (e.g. password)
-func processFlags() (err error) {
-	flag.StringVar(&server, "s", "", "IMAP server name")
-	flag.IntVar(&port, "p", 993, "IMAP port number")
-	flag.StringVar(&user, "u", "", "IMAP user name")
-	flag.StringVar(&pass, "P", "", "IMAP password. Really, consider entering this into stdin")
-	var folderNamesSeparated string
-	flag.StringVar(&folderNamesSeparated, "f", "INBOX,INBOX.Drafts,INBOX.Sent,INBOX.Spam,INBOX.Trash", "Comma-separated list of folders to work on")
-	flag.IntVar(&months, "m", -1, "Delete messages older than this amount of months, if >=0")
-	flag.Parse()
-	folderNames = strings.Split(folderNamesSeparated, ",")
+func cmdBackup(c *client.Client, folderNames []string) {
+	folders, filteredMsgs, filteredSize := cmdQuery(c, folderNames)
+	if filteredMsgs == 0 || filteredSize == 0 {
+		return
+	}
 
-	reader := bufio.NewReader(os.Stdin)
-	if server == "" {
-		fmt.Printf("IMAP server: ")
-		server, _ = reader.ReadString('\n')
-		server = strings.TrimSpace(server)
-	}
-	if user == "" {
-		fmt.Printf("Username: ")
-		user, _ = reader.ReadString('\n')
-		user = strings.TrimSpace(user)
-	}
-	if pass == "" {
-		fmt.Printf("Password: ")
-		// Read password from terminal without echoing it
-		oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-		if err != nil {
-			return err
+	// Download and append any new messages to local folder storage
+	bar := pb.DefaultBytes(int64(filteredSize), "Download")
+	for _, f := range folders {
+		if len(f.Messages) == 0 {
+			continue
 		}
-		defer func() {
-			if dErr := term.Restore(int(os.Stdin.Fd()), oldState); dErr != nil {
-				if err == nil {
-					err = dErr
-				}
-			}
-		}()
+		bar.Describe("Download " + f.Name)
 
-		t := term.NewTerminal(os.Stdin, "")
-		p, err := t.ReadPassword("")
+		// Open local mbox file and index file for appending
+		lf, err := OpenLocalFolderAppend(server, user, f.Name)
 		if err != nil {
-			return err
+			log.Fatal(err)
 		}
-		pass = string(p)
-		fmt.Println()
+		defer lf.Close()
+
+		// Download and store messages
+		err = f.DownloadTo(c, lf, bar)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
-	return nil
+}
+
+func cmdDelete(c *client.Client, folderNames []string) {
+	if months <= 0 {
+		return
+	}
+
+	now := time.Now()
+	before := now.AddDate(0, -months, 0) // n months back
+	ymd := "2006-01-02"
+	fmt.Printf("Today is %s, deleting messages %d months or older, so on or before %s",
+		now.Format(ymd), months, before.Format(ymd))
+
+	bar := pb.Default(int64(len(folderNames)), "Delete")
+	totalDeleted := int64(0)
+	for _, folderName := range folderNames {
+		bar.Describe("Delete " + folderName)
+		numDeleted, err := DeleteMessagesBefore(c, folderName, before)
+		if err != nil {
+			log.Fatal(err)
+		}
+		totalDeleted += int64(numDeleted)
+		if err := bar.Add(1); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	fmt.Printf("Total %d message deleted\n", totalDeleted)
+}
+
+// Returns a slice of all strings which are in as and bs, in stable order of as
+func intersect(as []string, bs []string) []string {
+	have := make(map[string]bool)
+	for _, b := range bs {
+		have[b] = true
+	}
+	cs := []string{}
+	for _, a := range as {
+		if _, ok := have[a]; ok {
+			cs = append(cs, a)
+		}
+	}
+	return cs
 }
 
 // Print a given size in bytes as a human-readable string
