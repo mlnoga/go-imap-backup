@@ -2,10 +2,6 @@
 
 Backs up messages from an IMAP server to local files, optionally deleting older messages.
 
-Backups are stored locally in a directory `server/user/`, which is created if necessary. For each folder on the server, the directory contains a mailbox file named `folder.mbox`, and an index of the messages therein in a file called `folder.idx`. 
-
-Newly identified messages on the server are appended to the mbox file. Messages deleted from the server are not removed from the mbox file, because it is intended to function as a permanent archive.
-
 
 ## Usage
 
@@ -27,9 +23,28 @@ The corresponding flags are:
 | -m    | Age limit for deletion in months, must be positive | 24 | 
 | -r    | Restrict to comma-separated list of folders | (blank) | 
 
+
+## File formats
+
+Backups are stored locally in a directory tree `server/user/`, which is created by the backup command if necessary. For each folder on the IMAP server, the local directory contains both a mailbox file named `folder.mbox`, and an index of the messages therein called `folder.idx`. 
+
+The `.mbox` files follow `mboxo` format as defined [here](https://en.wikipedia.org/wiki/Mbox). That is, they do not quote lines starting with `From `. This preserves message sizes, checksums and signature validities. The backup tool avoids ambiguities arising from this by always addressing the `.mbox` file according to the indices and offsets in the corresponding `.idx` file.
+
+The `.idx` file is a text file with one newline-separated line per message. Each line consists of the following tab-separated columns:
+
+| Column | Description |
+|--------|-------------|
+| UidValidity | A unique 32-bit integer identifier for an Imap folder |
+| Uid         | A unique 32-bit integer identifier for a message inside an Imap folder |
+| Size        | The size of the email message in bytes |
+| Offset      | The starting offset of the email message in the `.mbox` file |
+
+Note that the offset points directly at the start of the message itself, not at the separator line `From abc@def.com timestamp` preceding it in the `.mbox` file. The size is the exact size of the message as well, excluding the blank separator line following the message in the `.mbox` file.
+
+
 ## License
 
-GPL v3
+[GPL v3](https://www.gnu.org/licenses/gpl-3.0.en.html)
 
 
 ## Libraries used
