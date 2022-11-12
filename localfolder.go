@@ -40,9 +40,8 @@ type LocalFolder struct {
 	message []byte      // stores Text() of message
 }
 
-func GetLocalFolderNames(server, user string) (folderNames []string, err error) {
-	dir := server + "/" + user
-	dirInfos, err := os.ReadDir(dir)
+func GetLocalFolderNames(path string) (folderNames []string, err error) {
+	dirInfos, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
 	}
@@ -61,9 +60,8 @@ func GetLocalFolderNames(server, user string) (folderNames []string, err error) 
 }
 
 // Open local mail folder message and index file for reading
-func OpenLocalFolderReadOnly(server, user, folderName string) (lf *LocalFolder, err error) {
+func OpenLocalFolderReadOnly(path, folderName string) (lf *LocalFolder, err error) {
 	lf = &LocalFolder{Name: folderName}
-	path := server + "/" + user
 
 	// open mailbox file readonly
 	lf.Mbox, err = os.Open(path + "/" + folderName + ".mbox")
@@ -167,9 +165,8 @@ func (lf *LocalFolder) MboxText() []byte {
 }
 
 // Open a local mail folder for appending messages
-func OpenLocalFolderAppend(server, user, folderName string) (lf *LocalFolder, err error) {
+func OpenLocalFolderAppend(path, folderName string) (lf *LocalFolder, err error) {
 	// Ensure path exists
-	path := server + "/" + user
 	if err := os.MkdirAll(path, 0700); err != nil {
 		return nil, err
 	}
