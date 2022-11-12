@@ -41,7 +41,14 @@ var force bool
 
 func init() {
 	flag.Usage = func() {
-		fmt.Fprintln(flag.CommandLine.Output(), "Usage: go-imap-backup [-flags] [query|backup|delete]")
+		o := flag.CommandLine.Output()
+		fmt.Fprintln(o, "Usage: go-imap-backup [-flags] command, where command is one of:")
+		fmt.Fprintln(o, "  query:  fetch metadata from Imap server")
+		fmt.Fprintln(o, "  backup: backup Imap server to local folders")
+		fmt.Fprintln(o, "  delete: delete older messages from Imap server")
+		fmt.Fprintln(o, "  lquery: fetch metadata from local folders")
+		fmt.Fprintln(o, "")
+		fmt.Fprintln(o, "The available flags are:")
 		flag.PrintDefaults()
 	}
 
@@ -58,10 +65,18 @@ func main() {
 	// parse command-line arguments
 	flag.Parse()
 	args := flag.Args()
-	if len(args) != 1 || (args[0] != "query" && args[0] != "backup" && args[0] != "delete") {
+	if len(args) != 1 || (args[0] != "query" && args[0] != "lquery" && args[0] != "backup" && args[0] != "delete") {
 		flag.Usage()
 		return
 	}
+
+	switch args[0] {
+	case "lquery":
+		cmdLocalQuery()
+		return
+	}
+
+	// complete flags for remote operations
 	if err := completeFlags(); err != nil {
 		log.Fatal(err)
 	}
@@ -193,13 +208,13 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 			log.Fatal(err)
 		}
 		defer lf.Close()
-		mdsMap, _, err := lf.ReadAllIndex()
+		lfm, err := lf.ReadAllIndex()
 		if err != nil {
 			log.Fatal(err)
 		}
 
 		// Filter out messages which are already backed up locally
-		f.Messages, f.Size = filterNewMsgMetaData(f.Messages, mdsMap)
+		f.Messages, f.Size = f.FilterOut(lfm)
 		filteredMsgs += len(f.Messages)
 		filteredSize += f.Size
 		if err := bar.Add(1); err != nil {
@@ -209,7 +224,7 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 
 	// Print overall message summary and folder details
 	fmt.Println()
-	fmt.Printf("%s/%s (%d/%d msg, %s/%s)\n", server, user, filteredMsgs, totalMsgs,
+	fmt.Printf("%s/%s (%d/%d messages, %s/%s)\n", server, user, filteredMsgs, totalMsgs,
 		humanReadableSize(filteredSize), humanReadableSize(totalSize))
 	for _, f := range folders {
 		fmt.Printf("|- %s (%d, %s)\n", f.Name, len(f.Messages), humanReadableSize(f.Size))
@@ -286,3 +301,60 @@ func cmdDelete(c *client.Client, folderNames []string) {
 
 	fmt.Printf("Total %d message deleted\n", totalDeleted)
 }
+
+func cmdLocalQuery() {
+	folderNames, err := GetLocalFolderNames(server, user)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	bar := pb.Default(int64(len(folderNames)), "Local query")
+	folders := make([]*ImapFolderMeta, len(folderNames))
+	totalMsgs, totalSize := uint32(0), uint64(0)
+
+	for i, folderName := range folderNames {
+		bar.Describe("Local query " + folderName)
+
+		lf, err := OpenLocalFolderReadOnly(server, user, folderName)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer lf.Close()
+
+		folders[i], err = lf.ReadAllIndex()
+		if err != nil {
+			log.Fatal(err)
+		}
+		totalMsgs += uint32(len(folders[i].Messages))
+		totalSize += folders[i].Size
+
+		if err := bar.Add(1); err != nil {
+			log.Fatal(err)
+		}
+	}
+
+	// Print overall message summary and folder details
+	fmt.Println()
+	fmt.Printf("%s/%s (%d messages, %s)\n", server, user, totalMsgs, humanReadableSize(totalSize))
+	for _, f := range folders {
+		fmt.Printf("|- %s (%d, %s)\n", f.Name, len(f.Messages), humanReadableSize(f.Size))
+	}
+	fmt.Println()
+}
+
+// For future implementation of the "restore" command:
+//
+// msgCount:=0
+// for lf.MboxScan() {
+// 	msg:=lf.MboxText()
+// 	msgCount++
+// 	size:=len(msg)
+// 	printSize:=size
+// 	if printSize>400 {
+// 		printSize=400
+// 	}
+// 	fmt.Printf("Message %d len %d first bytes: %s\n\n", msgCount, size, string(msg[:printSize]))
+// }
+// if err:=lf.MboxErr(); err!=nil {
+// 	log.Fatal(err)
+// }

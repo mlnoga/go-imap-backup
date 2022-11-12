@@ -19,22 +19,50 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"sort"
+	"strings"
 	"time"
 )
 
 // A local mail folder, consisting of an .mbox file and its corresponding index .idx
 type LocalFolder struct {
+	Name       string
 	Mbox       *os.File
 	Idx        *os.File
 	IdxWriter  *bufio.Writer  // for writing to the index line by line, in append mode
 	IdxScanner *bufio.Scanner // for reading the index line by line, in readonly mode
 	IdxLineNo  int
+
+	err     error       // stores mbox error
+	mm      MessageMeta // message
+	message []byte      // stores Text() of message
+}
+
+func GetLocalFolderNames(server, user string) (folderNames []string, err error) {
+	dir := server + "/" + user
+	dirInfos, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	for _, dirInfo := range dirInfos {
+		if dirInfo.IsDir() {
+			continue
+		}
+		name := dirInfo.Name()
+		if strings.HasSuffix(name, ".idx") {
+			folderName := name[0 : len(name)-4]
+			folderNames = append(folderNames, folderName)
+		}
+	}
+	sort.Strings(folderNames)
+	return folderNames, nil
 }
 
 // Open local mail folder message and index file for reading
 func OpenLocalFolderReadOnly(server, user, folderName string) (lf *LocalFolder, err error) {
-	lf = &LocalFolder{}
+	lf = &LocalFolder{Name: folderName}
 	path := server + "/" + user
 
 	// open mailbox file readonly
@@ -55,46 +83,87 @@ func OpenLocalFolderReadOnly(server, user, folderName string) (lf *LocalFolder, 
 	return lf, nil
 }
 
-// Reads the entire index from a local mail folder, and returns it as a hash map
-func (lf *LocalFolder) ReadAllIndex() (res map[uint64]MessageMeta, uidValidity uint32, err error) {
+// Reads the entire index from a local mail folder, and returns it as folder metadata
+func (lf *LocalFolder) ReadAllIndex() (f *ImapFolderMeta, err error) {
+	f = &ImapFolderMeta{Name: lf.Name}
 	// read line by line
-	res = make(map[uint64]MessageMeta)
 	lineNo := 1
 	for lf.IdxScan() {
-		mm, err := lf.IdxText()
-		if err != nil {
-			return nil, 0, err
-		}
-		uidValidity = mm.UidValidity
-		res[mm.GetUuid()] = mm
+		msg := lf.IdxText()
+		f.Messages = append(f.Messages, msg)
+		f.UidValidity = msg.UidValidity
+		f.Size += uint64(msg.Size)
 	}
 	if err := lf.IdxErr(); err != nil {
-		return nil, 0, fmt.Errorf("%s:%d: %s", lf.Idx.Name(), lineNo, err.Error())
+		return nil, fmt.Errorf("%s:%d: %s", lf.Idx.Name(), lineNo, err.Error())
 	}
 
-	return res, uidValidity, nil
+	return f, nil
 }
 
 // Scan the next index file line, behaves like bufio.Scan().
 func (lf *LocalFolder) IdxScan() bool {
-	res := lf.IdxScanner.Scan()
+	idxScan := lf.IdxScanner.Scan()
 	lf.IdxLineNo++
-	return res
+	if !idxScan {
+		lf.err = lf.IdxScanner.Err()
+		return false
+	}
+
+	line := lf.IdxScanner.Text() // without terminating newline
+	_, err := fmt.Sscanf(line, "%d\t%d\t%d\t%d", &lf.mm.UidValidity, &lf.mm.Uid, &lf.mm.Size, &lf.mm.Offset)
+	if err != nil {
+		lf.err = fmt.Errorf("%s:%d: %s", lf.Idx.Name(), lf.IdxLineNo, err.Error())
+		return false
+	}
+
+	return true
 }
 
 // Returns error from last index file line scan, behaves like bufio.Err()
 func (lf *LocalFolder) IdxErr() error {
-	return lf.IdxScanner.Err()
+	return lf.err
 }
 
-// Parse the current index line into a MessageMeta value, behaves like bufio.Text()
-func (lf *LocalFolder) IdxText() (mm MessageMeta, err error) {
-	line := lf.IdxScanner.Text() // without terminating newline
-	_, err = fmt.Sscanf(line, "%d\t%d\t%d\t%d", &mm.UidValidity, &mm.Uid, &mm.Size, &mm.Offset)
-	if err != nil {
-		return mm, fmt.Errorf("%s:%d: %s", lf.Idx.Name(), lf.IdxLineNo, err.Error())
+// Returns the MessageMeta value for the last index file line scan, behaves like bufio.Text()
+func (lf *LocalFolder) IdxText() MessageMeta {
+	return lf.mm
+}
+
+// Scan the next message from mbox/idx, behaves like bufio.Scan().
+func (lf *LocalFolder) MboxScan() bool {
+	idxScan := lf.IdxScan()
+	if !idxScan {
+		lf.err = lf.IdxErr()
+		return false
 	}
-	return mm, nil
+	mm := lf.IdxText()
+
+	if _, err := lf.Mbox.Seek(int64(mm.Offset), io.SeekStart); err != nil {
+		lf.err = err
+		return false
+	}
+
+	if len(lf.message) < int(mm.Size) {
+		lf.message = make([]byte, mm.Size)
+	}
+
+	if _, err := lf.Mbox.Read(lf.message); err != nil {
+		lf.err = err
+		return false
+	}
+	lf.err = nil
+	return true
+}
+
+// Returns error from last message scan from mbox/idx, behaves like bufio.Err()
+func (lf *LocalFolder) MboxErr() error {
+	return lf.err
+}
+
+// Returns last message value from mbox/idx scan, behaves like bufio.Text()
+func (lf *LocalFolder) MboxText() []byte {
+	return lf.message
 }
 
 // Open a local mail folder for appending messages
@@ -134,7 +203,7 @@ func (lf *LocalFolder) Append(uidValidity, uid uint32, from string, when time.Ti
 	}
 
 	// retrieve current mbox file size in bytes, for storing in index file
-	pos, err := lf.Mbox.Seek(0, os.SEEK_CUR)
+	pos, err := lf.Mbox.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
 	}

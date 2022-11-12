@@ -16,7 +16,15 @@
 
 package main
 
-// Metadata for an email message on IMAP server or in a local .mbox file
+// Metadata for a folder and its messages on an IMAP server or in a local file
+type ImapFolderMeta struct {
+	Name        string
+	UidValidity uint32
+	Messages    []MessageMeta
+	Size        uint64 // total size of all messages in bytes
+}
+
+// Metadata for an email message on an IMAP server or in a local file
 type MessageMeta struct {
 	SeqNum      uint32 // sequence number >=1 on IMAP server, or 0 if unknown
 	UidValidity uint32
@@ -32,14 +40,25 @@ func (md *MessageMeta) GetUuid() uint64 {
 
 // From a list of messages, filter out all messages in the given map,
 // returning a new list of messages and total size of the messages in bytes.
-func filterNewMsgMetaData(mds []MessageMeta, lookup map[uint64]MessageMeta) (res []MessageMeta, size uint64) {
+func (f *ImapFolderMeta) FilterOut(out *ImapFolderMeta) (res []MessageMeta, size uint64) {
+	outMap := out.GetMap()
+
 	res = []MessageMeta{}
 	size = 0
-	for _, md := range mds {
-		if _, ok := lookup[md.GetUuid()]; !ok {
+	for _, md := range f.Messages {
+		if _, ok := outMap[md.GetUuid()]; !ok {
 			res = append(res, md)
 			size += uint64(md.Size)
 		}
 	}
 	return res, size
+}
+
+// Returns a map from unique 64-bit ids to messages in this folder
+func (f *ImapFolderMeta) GetMap() map[uint64]MessageMeta {
+	res := make(map[uint64]MessageMeta)
+	for _, m := range f.Messages {
+		res[m.GetUuid()] = m
+	}
+	return res
 }

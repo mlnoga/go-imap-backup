@@ -49,14 +49,6 @@ func ListFolders(c *client.Client) ([]string, error) {
 	return mailboxes, nil
 }
 
-// Metadata for a folder on an IMAP server and its messages
-type ImapFolderMeta struct {
-	Name        string
-	UidValidity uint32
-	Messages    []MessageMeta
-	Size        uint64 // total size of all messages in bytes
-}
-
 // Creates local metadata for an imap folder by fetching  metadata for all its messages
 func NewImapFolderMeta(c *client.Client, folderName string) (ifm *ImapFolderMeta, err error) {
 	ifm = &ImapFolderMeta{Name: folderName}
