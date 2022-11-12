@@ -1,6 +1,6 @@
 # go-imap-backup
 
-Backup emails from an IMAP server to local files, optionally deleting older messages.
+Backup emails from an IMAP server to local storage, optionally deleting older messages.
 
 
 ## Usage
