@@ -34,6 +34,7 @@ var server string
 var port int
 var user string
 var pass string
+var localStoragePath string
 var restrictToFoldersSeparated string
 var restrictToFolderNames []string
 var months int
@@ -56,20 +57,25 @@ func init() {
 	flag.IntVar(&port, "p", 993, "IMAP port number")
 	flag.StringVar(&user, "u", "", "IMAP user name")
 	flag.StringVar(&pass, "P", "", "IMAP password. Really, consider entering this into stdin")
+	flag.StringVar(&localStoragePath, "l", "", "Local storage path, defaults to (server)/(user)")
 	flag.IntVar(&months, "m", 24, "Age limit for deletion in months, must be positive")
 	flag.BoolVar(&force, "f", false, "Force deletion of older messages without confirmation prompt")
 	flag.StringVar(&restrictToFoldersSeparated, "r", "", "Restrict command to a comma-separated list of folders")
 }
 
 func main() {
-	// parse command-line arguments
+	// parse command-line arguments, and complete for local commands
 	flag.Parse()
 	args := flag.Args()
 	if len(args) != 1 || (args[0] != "query" && args[0] != "lquery" && args[0] != "backup" && args[0] != "delete") {
 		flag.Usage()
 		return
 	}
+	if err := completeFlagsLocal(); err != nil {
+		log.Fatal(err)
+	}
 
+	// perform local command, if given
 	switch args[0] {
 	case "lquery":
 		cmdLocalQuery()
@@ -77,7 +83,7 @@ func main() {
 	}
 
 	// complete flags for remote operations
-	if err := completeFlags(); err != nil {
+	if err := completeFlagsRemote(); err != nil {
 		log.Fatal(err)
 	}
 
@@ -136,8 +142,25 @@ func main() {
 	fmt.Println("Done, exiting.")
 }
 
-// Validate command line flags and prompt for missing parameters (e.g. password)
-func completeFlags() (err error) {
+// Validate command line flags for local commands, and prompt for missing parameters
+func completeFlagsLocal() (err error) {
+	reader := bufio.NewReader(os.Stdin)
+	if server == "" {
+		fmt.Printf("IMAP server: ")
+		server, _ = reader.ReadString('\n')
+		server = strings.TrimSpace(server)
+	}
+
+	if user == "" {
+		fmt.Printf("Username: ")
+		user, _ = reader.ReadString('\n')
+		user = strings.TrimSpace(user)
+	}
+
+	if localStoragePath == "" {
+		localStoragePath = server + "/" + user
+	}
+
 	if months <= 0 {
 		return fmt.Errorf("Months must be positive, is %d", months)
 	}
@@ -147,17 +170,11 @@ func completeFlags() (err error) {
 		restrictToFolderNames = nil
 	}
 
-	reader := bufio.NewReader(os.Stdin)
-	if server == "" {
-		fmt.Printf("IMAP server: ")
-		server, _ = reader.ReadString('\n')
-		server = strings.TrimSpace(server)
-	}
-	if user == "" {
-		fmt.Printf("Username: ")
-		user, _ = reader.ReadString('\n')
-		user = strings.TrimSpace(user)
-	}
+	return nil
+}
+
+// Validate command line flags for remote commands, and prompt for missing parameters
+func completeFlagsRemote() (err error) {
 	if pass == "" {
 		fmt.Printf("Password: ")
 		// Read password from terminal without echoing it
@@ -203,7 +220,7 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 		totalSize += folders[i].Size
 
 		// Find out which messages are stored locally
-		lf, err := OpenLocalFolderReadOnly(server, user, folderName)
+		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -249,7 +266,7 @@ func cmdBackup(c *client.Client, folderNames []string) {
 		bar.Describe("Download " + f.Name)
 
 		// Open local mbox file and index file for appending
-		lf, err := OpenLocalFolderAppend(server, user, f.Name)
+		lf, err := OpenLocalFolderAppend(localStoragePath, f.Name)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -303,7 +320,7 @@ func cmdDelete(c *client.Client, folderNames []string) {
 }
 
 func cmdLocalQuery() {
-	folderNames, err := GetLocalFolderNames(server, user)
+	folderNames, err := GetLocalFolderNames(localStoragePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -315,7 +332,7 @@ func cmdLocalQuery() {
 	for i, folderName := range folderNames {
 		bar.Describe("Local query " + folderName)
 
-		lf, err := OpenLocalFolderReadOnly(server, user, folderName)
+		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
 		if err != nil {
 			log.Fatal(err)
 		}
