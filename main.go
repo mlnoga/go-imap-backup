@@ -44,10 +44,11 @@ func init() {
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
 		fmt.Fprintln(o, "Usage: go-imap-backup [-flags] command, where command is one of:")
-		fmt.Fprintln(o, "  query:  fetch folder and message overview from IMAP server")
-		fmt.Fprintln(o, "  backup: save new messages on IMAP server to local storage")
-		fmt.Fprintln(o, "  delete: delete older messages from IMAP server")
-		fmt.Fprintln(o, "  lquery: fetch folder and message metadata from local storage")
+		fmt.Fprintln(o, "  query:   fetch folder and message overview from IMAP server")
+		fmt.Fprintln(o, "  backup:  save new messages on IMAP server to local storage")
+		fmt.Fprintln(o, "  restore: restore messages from local storage to an IMAP server")
+		fmt.Fprintln(o, "  delete:  delete older messages from IMAP server")
+		fmt.Fprintln(o, "  lquery:  fetch folder and message metadata from local storage")
 		fmt.Fprintln(o, "")
 		fmt.Fprintln(o, "The available flags are:")
 		flag.PrintDefaults()
@@ -71,13 +72,13 @@ func main() {
 		flag.Usage()
 		return
 	}
-	if err := completeFlagsLocal(); err != nil {
-		log.Fatal(err)
-	}
 
 	// perform local command, if given
 	switch args[0] {
 	case "lquery":
+		if err := completeFlagsLocal(); err != nil {
+			log.Fatal(err)
+		}
 		cmdLocalQuery()
 		return
 	}
@@ -144,6 +145,22 @@ func main() {
 
 // Validate command line flags for local commands, and prompt for missing parameters
 func completeFlagsLocal() (err error) {
+	if localStoragePath == "" {
+		if server != "" && user != "" {
+			localStoragePath = server + "/" + user
+		} else {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Printf("Local storage path: ")
+			localStoragePath, _ = reader.ReadString('\n')
+			localStoragePath = strings.TrimSpace(localStoragePath)
+		}
+	}
+
+	return nil
+}
+
+// Validate command line flags for remote commands, and prompt for missing parameters
+func completeFlagsRemote() (err error) {
 	reader := bufio.NewReader(os.Stdin)
 	if server == "" {
 		fmt.Printf("IMAP server: ")
@@ -161,20 +178,6 @@ func completeFlagsLocal() (err error) {
 		localStoragePath = server + "/" + user
 	}
 
-	if months <= 0 {
-		return fmt.Errorf("Months must be positive, is %d", months)
-	}
-
-	restrictToFolderNames = strings.Split(restrictToFoldersSeparated, ",")
-	if len(restrictToFolderNames) == 1 && restrictToFolderNames[0] == "" {
-		restrictToFolderNames = nil
-	}
-
-	return nil
-}
-
-// Validate command line flags for remote commands, and prompt for missing parameters
-func completeFlagsRemote() (err error) {
 	if pass == "" {
 		fmt.Printf("Password: ")
 		// Read password from terminal without echoing it
@@ -198,6 +201,16 @@ func completeFlagsRemote() (err error) {
 		pass = string(p)
 		fmt.Println()
 	}
+
+	if months <= 0 {
+		return fmt.Errorf("Months must be positive, is %d", months)
+	}
+
+	restrictToFolderNames = strings.Split(restrictToFoldersSeparated, ",")
+	if len(restrictToFolderNames) == 1 && restrictToFolderNames[0] == "" {
+		restrictToFolderNames = nil
+	}
+
 	return nil
 }
 

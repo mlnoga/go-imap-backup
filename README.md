@@ -20,6 +20,7 @@ The available flags are:
 | -p    | IMAP port number    | 993                 |
 | -u    | IMAP user name      | (read from console) |
 | -P    | IMAP password       | (read from console) |
+| -l    | Local storage path  | (server)/(user)     |
 | -m    | Age limit for deletion in months, must be positive | 24 | 
 | -f    | Force deletion of older messages without confirmation prompt | false |
 | -r    | Restrict command to a comma-separated list of folders | (blank) | 
