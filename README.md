@@ -5,26 +5,27 @@ Backup emails from an IMAP server to local files, optionally deleting older mess
 
 ## Usage
 
-`go-imap-backup [-flags] command` where commands are:
+`go-imap-backup [-flags] command`, where `command` is one of:
 
-* `query` retrieves a summary of the messages on the server, and takes no further action
-* `backup` retrieves new messages from the server, and appends them to the local backup folders
-* `delete` removes messages older than the given amount of months from the server
+* `query` fetch folder and message overview from IMAP server
+* `backup` save new messages on IMAP server to local storage
+* `delete` delete older messages from IMAP server
+* `lquery` etch folder and message metadata from local storage
 
-The corresponding flags are:
+The available flags are:
 
 | Flag  | Description         | Default             |
 |-------|---------------------|---------------------|
 | -s    | IMAP server name    | (read from console) |
-| -p    | IMAP port address   | 993                 |
+| -p    | IMAP port number    | 993                 |
 | -u    | IMAP user name      | (read from console) |
 | -P    | IMAP password       | (read from console) |
-| -f    | Force deletion without confirmation prompt | false |
 | -m    | Age limit for deletion in months, must be positive | 24 | 
-| -r    | Restrict to comma-separated list of folders | (blank) | 
+| -f    | Force deletion of older messages without confirmation prompt | false |
+| -r    | Restrict command to a comma-separated list of folders | (blank) | 
 
 
-## File formats
+## Local storage
 
 Backups are stored locally in a directory tree `server/user/`, which is created by the backup command if necessary. For each folder on the IMAP server, the local directory contains both a mailbox file named `folder.mbox`, and an index of the messages therein called `folder.idx`. 
 

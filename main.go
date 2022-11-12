@@ -43,10 +43,10 @@ func init() {
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
 		fmt.Fprintln(o, "Usage: go-imap-backup [-flags] command, where command is one of:")
-		fmt.Fprintln(o, "  query:  fetch metadata from Imap server")
-		fmt.Fprintln(o, "  backup: backup Imap server to local folders")
-		fmt.Fprintln(o, "  delete: delete older messages from Imap server")
-		fmt.Fprintln(o, "  lquery: fetch metadata from local folders")
+		fmt.Fprintln(o, "  query:  fetch folder and message overview from IMAP server")
+		fmt.Fprintln(o, "  backup: save new messages on IMAP server to local storage")
+		fmt.Fprintln(o, "  delete: delete older messages from IMAP server")
+		fmt.Fprintln(o, "  lquery: fetch folder and message metadata from local storage")
 		fmt.Fprintln(o, "")
 		fmt.Fprintln(o, "The available flags are:")
 		flag.PrintDefaults()
@@ -56,9 +56,9 @@ func init() {
 	flag.IntVar(&port, "p", 993, "IMAP port number")
 	flag.StringVar(&user, "u", "", "IMAP user name")
 	flag.StringVar(&pass, "P", "", "IMAP password. Really, consider entering this into stdin")
-	flag.StringVar(&restrictToFoldersSeparated, "r", "", "Restrict command to a comma-separated list of folders")
-	flag.IntVar(&months, "m", 24, "Delete messages older than this amount of months")
+	flag.IntVar(&months, "m", 24, "Age limit for deletion in months, must be positive")
 	flag.BoolVar(&force, "f", false, "Force deletion of older messages without confirmation prompt")
+	flag.StringVar(&restrictToFoldersSeparated, "r", "", "Restrict command to a comma-separated list of folders")
 }
 
 func main() {
