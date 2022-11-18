@@ -1,6 +1,6 @@
 # go-imap-backup
 
-Backup emails from an IMAP server to local storage, optionally deleting older messages.
+Backup, restore and delete old messages from an IMAP server.
 
 
 ## Usage
@@ -8,9 +8,10 @@ Backup emails from an IMAP server to local storage, optionally deleting older me
 `go-imap-backup [-flags] command`, where `command` is one of:
 
 * `query` fetch folder and message overview from IMAP server
+* `lquery` fetch folder and message metadata from local storage
 * `backup` save new messages on IMAP server to local storage
+* `restore` restore messages from local storage to IMAP server
 * `delete` delete older messages from IMAP server
-* `lquery` etch folder and message metadata from local storage
 
 The available flags are:
 

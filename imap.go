@@ -1,5 +1,5 @@
 // go-imap-backup (C) 2022 by Markus L. Noga
-// Backup messages from an IMAP server, optionally deleting older messages
+// Backup, restore and delete old messages from an IMAP server
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -49,7 +49,7 @@ func ListFolders(c *client.Client) ([]string, error) {
 	return mailboxes, nil
 }
 
-// Creates local metadata for an imap folder by fetching  metadata for all its messages
+// Creates local metadata for an imap folder by fetching metadata for all its messages
 func NewImapFolderMeta(c *client.Client, folderName string) (ifm *ImapFolderMeta, err error) {
 	ifm = &ImapFolderMeta{Name: folderName}
 	mbox, err := c.Select(folderName, true)

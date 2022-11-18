@@ -1,5 +1,5 @@
 // go-imap-backup (C) 2022 by Markus L. Noga
-// Backup messages from an IMAP server, optionally deleting older messages
+// Backup, restore and delete old messages from an IMAP server
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,6 +18,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -35,9 +36,9 @@ type LocalFolder struct {
 	IdxScanner *bufio.Scanner // for reading the index line by line, in readonly mode
 	IdxLineNo  int
 
-	err     error       // stores mbox error
-	mm      MessageMeta // message
-	message []byte      // stores Text() of message
+	err     error         // stores mbox error
+	mm      MessageMeta   // message
+	message *bytes.Buffer // stores Text() of message
 }
 
 func GetLocalFolderNames(path string) (folderNames []string, err error) {
@@ -128,6 +129,22 @@ func (lf *LocalFolder) IdxText() MessageMeta {
 	return lf.mm
 }
 
+// Reads given message with random access from the local folder into the provided buffer
+func (lf *LocalFolder) ReadMessage(mm MessageMeta, buf *bytes.Buffer) error {
+	if _, err := lf.Mbox.Seek(int64(mm.Offset), io.SeekStart); err != nil {
+		lf.err = err
+		return err
+	}
+
+	buf.Reset()
+	if _, err := io.CopyN(buf, lf.Mbox, int64(mm.Size)); err != nil {
+		lf.err = err
+		return err
+	}
+
+	return nil
+}
+
 // Scan the next message from mbox/idx, behaves like bufio.Scan().
 func (lf *LocalFolder) MboxScan() bool {
 	idxScan := lf.IdxScan()
@@ -135,21 +152,16 @@ func (lf *LocalFolder) MboxScan() bool {
 		lf.err = lf.IdxErr()
 		return false
 	}
+
 	mm := lf.IdxText()
-
-	if _, err := lf.Mbox.Seek(int64(mm.Offset), io.SeekStart); err != nil {
+	if lf.message == nil {
+		lf.message = &bytes.Buffer{}
+	}
+	if err := lf.ReadMessage(mm, lf.message); err != nil {
 		lf.err = err
 		return false
 	}
 
-	if len(lf.message) < int(mm.Size) {
-		lf.message = make([]byte, mm.Size)
-	}
-
-	if _, err := lf.Mbox.Read(lf.message); err != nil {
-		lf.err = err
-		return false
-	}
 	lf.err = nil
 	return true
 }
@@ -160,7 +172,7 @@ func (lf *LocalFolder) MboxErr() error {
 }
 
 // Returns last message value from mbox/idx scan, behaves like bufio.Text()
-func (lf *LocalFolder) MboxText() []byte {
+func (lf *LocalFolder) MboxText() *bytes.Buffer {
 	return lf.message
 }
 

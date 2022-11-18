@@ -1,5 +1,5 @@
 // go-imap-backup (C) 2022 by Markus L. Noga
-// Backup messages from an IMAP server, optionally deleting older messages
+// Backup, restore and delete old messages from an IMAP server
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -26,7 +26,6 @@ import (
 	"log"
 	"os"
 	"strings"
-	"time"
 )
 
 // command line flag values
@@ -45,10 +44,10 @@ func init() {
 		o := flag.CommandLine.Output()
 		fmt.Fprintln(o, "Usage: go-imap-backup [-flags] command, where command is one of:")
 		fmt.Fprintln(o, "  query:   fetch folder and message overview from IMAP server")
-		fmt.Fprintln(o, "  backup:  save new messages on IMAP server to local storage")
-		fmt.Fprintln(o, "  restore: restore messages from local storage to an IMAP server")
-		fmt.Fprintln(o, "  delete:  delete older messages from IMAP server")
 		fmt.Fprintln(o, "  lquery:  fetch folder and message metadata from local storage")
+		fmt.Fprintln(o, "  backup:  save new messages on IMAP server to local storage")
+		fmt.Fprintln(o, "  restore: restore messages from local storage to IMAP server")
+		fmt.Fprintln(o, "  delete:  delete older messages from IMAP server")
 		fmt.Fprintln(o, "")
 		fmt.Fprintln(o, "The available flags are:")
 		flag.PrintDefaults()
@@ -59,7 +58,7 @@ func init() {
 	flag.StringVar(&user, "u", "", "IMAP user name")
 	flag.StringVar(&pass, "P", "", "IMAP password. Really, consider entering this into stdin")
 	flag.StringVar(&localStoragePath, "l", "", "Local storage path, defaults to (server)/(user)")
-	flag.IntVar(&months, "m", 24, "Age limit for deletion in months, must be positive")
+	flag.IntVar(&months, "m", 24, "Age limit for deletion in months, must be non-negative")
 	flag.BoolVar(&force, "f", false, "Force deletion of older messages without confirmation prompt")
 	flag.StringVar(&restrictToFoldersSeparated, "r", "", "Restrict command to a comma-separated list of folders")
 }
@@ -68,7 +67,8 @@ func main() {
 	// parse command-line arguments, and complete for local commands
 	flag.Parse()
 	args := flag.Args()
-	if len(args) != 1 || (args[0] != "query" && args[0] != "lquery" && args[0] != "backup" && args[0] != "delete") {
+	if len(args) != 1 || (args[0] != "query" && args[0] != "lquery" && args[0] != "backup" &&
+		args[0] != "restore" && args[0] != "delete") {
 		flag.Usage()
 		return
 	}
@@ -136,6 +136,9 @@ func main() {
 	case "backup":
 		cmdBackup(c, folderNames)
 
+	case "restore":
+		cmdRestore(c)
+
 	case "delete":
 		cmdDelete(c, folderNames)
 	}
@@ -202,8 +205,8 @@ func completeFlagsRemote() (err error) {
 		fmt.Println()
 	}
 
-	if months <= 0 {
-		return fmt.Errorf("Months must be positive, is %d", months)
+	if months < 0 {
+		return fmt.Errorf("Months must be non-negative, is %d", months)
 	}
 
 	restrictToFolderNames = strings.Split(restrictToFoldersSeparated, ",")
@@ -213,178 +216,3 @@ func completeFlagsRemote() (err error) {
 
 	return nil
 }
-
-func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta, filteredMsgs int, filteredSize uint64) {
-	// Process all folders
-	bar := pb.Default(int64(len(folderNames)), "List")
-	folders = make([]*ImapFolderMeta, len(folderNames))
-	totalMsgs, totalSize := 0, uint64(0)
-	for i, folderName := range folderNames {
-		bar.Describe("List " + folderName)
-
-		// Fetch metadata for all messages in the folder
-		var err error
-		folders[i], err = NewImapFolderMeta(c, folderName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		f := folders[i]
-		totalMsgs += len(f.Messages)
-		totalSize += folders[i].Size
-
-		// Find out which messages are stored locally
-		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer lf.Close()
-		lfm, err := lf.ReadAllIndex()
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		// Filter out messages which are already backed up locally
-		f.Messages, f.Size = f.FilterOut(lfm)
-		filteredMsgs += len(f.Messages)
-		filteredSize += f.Size
-		if err := bar.Add(1); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	// Print overall message summary and folder details
-	fmt.Println()
-	fmt.Printf("%s/%s (%d/%d messages, %s/%s)\n", server, user, filteredMsgs, totalMsgs,
-		humanReadableSize(filteredSize), humanReadableSize(totalSize))
-	for _, f := range folders {
-		fmt.Printf("|- %s (%d, %s)\n", f.Name, len(f.Messages), humanReadableSize(f.Size))
-	}
-	fmt.Println()
-
-	return folders, filteredMsgs, filteredSize
-}
-
-func cmdBackup(c *client.Client, folderNames []string) {
-	folders, filteredMsgs, filteredSize := cmdQuery(c, folderNames)
-	if filteredMsgs == 0 || filteredSize == 0 {
-		return
-	}
-
-	// Download and append any new messages to local folder storage
-	bar := pb.DefaultBytes(int64(filteredSize), "Download")
-	for _, f := range folders {
-		if len(f.Messages) == 0 {
-			continue
-		}
-		bar.Describe("Download " + f.Name)
-
-		// Open local mbox file and index file for appending
-		lf, err := OpenLocalFolderAppend(localStoragePath, f.Name)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer lf.Close()
-
-		// Download and store messages
-		err = f.DownloadTo(c, lf, bar)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-}
-
-func cmdDelete(c *client.Client, folderNames []string) {
-	if months <= 0 {
-		return
-	}
-
-	now := time.Now()
-	before := now.AddDate(0, -months, 0) // n months back
-	ymd := "2006-01-02"
-	fmt.Printf("Today is %s, deleting messages %d months or older, so on or before %s.\n",
-		now.Format(ymd), months, before.Format(ymd))
-
-	if !force {
-		reader := bufio.NewReader(os.Stdin)
-		fmt.Printf("Are you sure [y/n]: ")
-		yn, _ := reader.ReadString('\n')
-		yn = strings.TrimSpace(yn)
-		if yn != "y" && yn != "Y" {
-			fmt.Println("User did not confirm, aborting.")
-			return
-		}
-	}
-
-	bar := pb.Default(int64(len(folderNames)), "Delete")
-	totalDeleted := int64(0)
-	for _, folderName := range folderNames {
-		bar.Describe("Delete " + folderName)
-		numDeleted, err := DeleteMessagesBefore(c, folderName, before)
-		if err != nil {
-			log.Fatal(err)
-		}
-		totalDeleted += int64(numDeleted)
-		if err := bar.Add(1); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	fmt.Printf("Total %d message deleted\n", totalDeleted)
-}
-
-func cmdLocalQuery() {
-	folderNames, err := GetLocalFolderNames(localStoragePath)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	bar := pb.Default(int64(len(folderNames)), "Local query")
-	folders := make([]*ImapFolderMeta, len(folderNames))
-	totalMsgs, totalSize := uint32(0), uint64(0)
-
-	for i, folderName := range folderNames {
-		bar.Describe("Local query " + folderName)
-
-		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer lf.Close()
-
-		folders[i], err = lf.ReadAllIndex()
-		if err != nil {
-			log.Fatal(err)
-		}
-		totalMsgs += uint32(len(folders[i].Messages))
-		totalSize += folders[i].Size
-
-		if err := bar.Add(1); err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	// Print overall message summary and folder details
-	fmt.Println()
-	fmt.Printf("%s/%s (%d messages, %s)\n", server, user, totalMsgs, humanReadableSize(totalSize))
-	for _, f := range folders {
-		fmt.Printf("|- %s (%d, %s)\n", f.Name, len(f.Messages), humanReadableSize(f.Size))
-	}
-	fmt.Println()
-}
-
-// For future implementation of the "restore" command:
-//
-// msgCount:=0
-// for lf.MboxScan() {
-// 	msg:=lf.MboxText()
-// 	msgCount++
-// 	size:=len(msg)
-// 	printSize:=size
-// 	if printSize>400 {
-// 		printSize=400
-// 	}
-// 	fmt.Printf("Message %d len %d first bytes: %s\n\n", msgCount, size, string(msg[:printSize]))
-// }
-// if err:=lf.MboxErr(); err!=nil {
-// 	log.Fatal(err)
-// }
