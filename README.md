@@ -59,5 +59,6 @@ repositories for licensing terms.
 * [golang.org/x/term](https://golang.org/x/term)
 * [golang.org/x/text](https://golang.org/x/text) (indirect)
 * [github.com/emersion/go-imap](https://github.com/emersion/go-imap)
+* [github.com/emersion/go-imap](https://github.com/emersion/go-message)
 * [github.com/emersion/go-sasl](https://github.com/emersion/go-sasl) (indirect)
 * [github.com/schollz/progressbar](https://github.com/schollz/progressbar)
