@@ -186,14 +186,14 @@ func OpenLocalFolderAppend(path, folderName string) (lf *LocalFolder, err error)
 	lf = &LocalFolder{}
 	// open mailbox file for appending
 	mboxName := path + "/" + folderName + ".mbox"
-	lf.Mbox, err = os.OpenFile(mboxName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0400)
+	lf.Mbox, err = os.OpenFile(mboxName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
 	}
 
 	// open mailbox index file for appending
 	idxName := path + "/" + folderName + ".idx"
-	lf.Idx, err = os.OpenFile(idxName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0400)
+	lf.Idx, err = os.OpenFile(idxName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		lf.Mbox.Close()
 		return nil, err
