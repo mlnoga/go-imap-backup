@@ -5,7 +5,7 @@ Backup, restore and delete old messages from an IMAP server.
 
 ## Usage
 
-`go-imap-backup [-flags] command`, where `command` is one of:
+`go build`, then `go-imap-backup [-flags] command`, where `command` is one of:
 
 * `query` fetch folder and message overview from IMAP server
 * `lquery` fetch folder and message metadata from local storage
@@ -13,7 +13,7 @@ Backup, restore and delete old messages from an IMAP server.
 * `restore` restore messages from local storage to IMAP server
 * `delete` delete older messages from IMAP server
 
-The available flags are:
+Flags must be given before the command. The available flags are:
 
 | Flag  | Description         | Default             |
 |-------|---------------------|---------------------|
