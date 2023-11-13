@@ -131,7 +131,10 @@ func (f *ImapFolderMeta) DownloadTo(c *client.Client, lf *LocalFolder, bar *pb.P
 			return err
 		}
 
-		env := msg.Envelope.From[0].Address()
+		var env string
+		if len(msg.Envelope.From)>0 {
+			env = msg.Envelope.From[0].Address()
+		}
 		date := msg.Envelope.Date
 		if err := lf.Append(mbox.UidValidity, msg.Uid, env, date, bs); err != nil {
 			return err
