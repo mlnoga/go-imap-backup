@@ -124,7 +124,7 @@ func (f *ImapFolderMeta) DownloadTo(c *client.Client, lf *LocalFolder, bar *pb.P
 		// read message into memory
 		r := msg.GetBody(section)
 		if r == nil {
-			return fmt.Errorf("Server didn't return message body")
+			return fmt.Errorf("server didn't return message body")
 		}
 		bs, err := io.ReadAll(r)
 		if err != nil {

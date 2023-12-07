@@ -18,11 +18,12 @@ package main
 
 import (
 	"fmt"
-	message "github.com/emersion/go-message"
-	_ "github.com/emersion/go-message/charset"
 	"io"
 	"strings"
 	"time"
+
+	message "github.com/emersion/go-message"
+	_ "github.com/emersion/go-message/charset"
 )
 
 // Parses given bytes as an email message, and returns the timestamp
@@ -35,7 +36,7 @@ func GetMessageReceived(r io.Reader) (t time.Time, err error) {
 	}
 	fields := m.Header.FieldsByKey("Received")
 	if !fields.Next() {
-		return time.Time{}, fmt.Errorf("Missing Received field in message")
+		return time.Time{}, fmt.Errorf("missing Received field in message")
 	}
 	receivedValue, err := fields.Text()
 	if err != nil {
@@ -43,7 +44,7 @@ func GetMessageReceived(r io.Reader) (t time.Time, err error) {
 	}
 	splits := strings.Split(receivedValue, ";")
 	if len(splits) < 2 {
-		return time.Time{}, fmt.Errorf("Received field lacks semicolon: %s", receivedValue)
+		return time.Time{}, fmt.Errorf("received field lacks semicolon: %s", receivedValue)
 	}
 	timeString := strings.TrimSpace(splits[len(splits)-1])
 	t, err = time.Parse(time.RFC1123Z, timeString)
