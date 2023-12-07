@@ -20,17 +20,82 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/emersion/go-imap/client"
-	pb "github.com/schollz/progressbar/v3"
 	"log"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/emersion/go-imap/client"
+	pb "github.com/schollz/progressbar/v3"
 )
+
+// performs the remote command given by cmd
+func cmdRemote(cmd string) (err error) {
+	// Connect
+	bar := pb.Default(3, "Connect")
+	addr := fmt.Sprintf("%s:%d", server, port)
+	c, err := client.DialTLS(addr, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := c.Logout(); err != nil {
+			// cannot return a value from a deferred function when logout fails - just log it
+			log.Printf("error logging out: %s", err)
+		}
+	}()
+	if err := bar.Add(1); err != nil {
+		return err
+	}
+
+	// Login
+	bar.Describe("Login")
+	if err := c.Login(user, pass); err != nil {
+		return err
+	}
+	if err := bar.Add(1); err != nil {
+		return err
+	}
+
+	// List folders
+	bar.Describe("List folders")
+	folderNames, err := ListFolders(c)
+	if err != nil {
+		return err
+	}
+	if err := bar.Add(1); err != nil {
+		return err
+	}
+
+	// Restrict if necessary
+	if len(restrictToFolderNames) > 0 {
+		folderNames = intersect(folderNames, restrictToFolderNames)
+	}
+
+	// Execute given command
+	switch cmd {
+	case "query":
+		_, _, _, err := cmdQuery(c, folderNames)
+		return err
+
+	case "backup":
+		return cmdBackup(c, folderNames)
+
+	case "restore":
+		return cmdRestore(c)
+
+	case "delete":
+		return cmdDelete(c, folderNames)
+
+	default:
+		return fmt.Errorf("unknown command %s", cmd)
+	}
+}
 
 // Queries an IMAP account for the contents of all folders with given names,
 // filtering out messages already in the coresponding local storage.
-func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta, filteredMsgs int, filteredSize uint64) {
+// Returns a list of folders with the filtered messages therein, or err on error.
+func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta, filteredMsgs int, filteredSize uint64, err error) {
 	// Process all folders
 	bar := pb.Default(int64(len(folderNames)), "List")
 	folders = make([]*ImapFolderMeta, len(folderNames))
@@ -42,7 +107,7 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 		var err error
 		folders[i], err = NewImapFolderMeta(c, folderName)
 		if err != nil {
-			log.Fatal(err)
+			return nil, 0, 0, err
 		}
 		f := folders[i]
 		totalMsgs += len(f.Messages)
@@ -51,25 +116,25 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 		// Check if local folder of this name exists
 		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
 		if err != nil {
-			if ! (strings.HasSuffix(err.Error(), "The system cannot find the file specified.") || 
-			      strings.HasSuffix(err.Error(), "The system cannot find the path specified.") )  {
-				log.Fatal(err)
+			if !(strings.HasSuffix(err.Error(), "The system cannot find the file specified.") ||
+				strings.HasSuffix(err.Error(), "The system cannot find the path specified.")) {
+				return nil, 0, 0, err
 			}
 			// fallthrough if there is no local folder
 		} else {
 			// Filter out messages which are already backed up locally
 			defer lf.Close()
-			lfm, err := lf.ReadAllIndex()
-			if err != nil {
-				log.Fatal(err)
+			if lfm, err := lf.ReadAllIndex(); err != nil {
+				return nil, 0, 0, err
+			} else {
+				f.Messages, f.Size = f.FilterOut(lfm)
 			}
-			f.Messages, f.Size = f.FilterOut(lfm)
 		}
 
 		filteredMsgs += len(f.Messages)
 		filteredSize += f.Size
 		if err := bar.Add(1); err != nil {
-			log.Fatal(err)
+			return nil, 0, 0, err
 		}
 	}
 
@@ -82,14 +147,18 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 	}
 	fmt.Println()
 
-	return folders, filteredMsgs, filteredSize
+	return folders, filteredMsgs, filteredSize, nil
 }
 
-// Backs up new messages in an IMAP account to the coresponding local storage
-func cmdBackup(c *client.Client, folderNames []string) {
-	folders, filteredMsgs, filteredSize := cmdQuery(c, folderNames)
+// Backs up new messages in an IMAP account to the coresponding local storage.
+// Returns err on error, else nil
+func cmdBackup(c *client.Client, folderNames []string) (err error) {
+	folders, filteredMsgs, filteredSize, err := cmdQuery(c, folderNames)
+	if err != nil {
+		return err
+	}
 	if filteredMsgs == 0 || filteredSize == 0 {
-		return
+		return nil
 	}
 
 	// Download and append any new messages to local folder storage
@@ -103,22 +172,23 @@ func cmdBackup(c *client.Client, folderNames []string) {
 		// Open local mbox file and index file for appending
 		lf, err := OpenLocalFolderAppend(localStoragePath, f.Name)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		defer lf.Close()
 
 		// Download and store messages
 		err = f.DownloadTo(c, lf, bar)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
+	return nil
 }
 
 // Deletes messages older than a given number of months from an IMAP server
-func cmdDelete(c *client.Client, folderNames []string) {
+func cmdDelete(c *client.Client, folderNames []string) (err error) {
 	if months < 0 {
-		return
+		return fmt.Errorf("months must be >= 0")
 	}
 
 	now := time.Now().UTC()
@@ -133,8 +203,7 @@ func cmdDelete(c *client.Client, folderNames []string) {
 		yn, _ := reader.ReadString('\n')
 		yn = strings.TrimSpace(yn)
 		if yn != "y" && yn != "Y" {
-			fmt.Println("User did not confirm, aborting.")
-			return
+			return fmt.Errorf("user did not confirm, aborting")
 		}
 	}
 
@@ -144,22 +213,23 @@ func cmdDelete(c *client.Client, folderNames []string) {
 		bar.Describe("Delete " + folderName)
 		numDeleted, err := DeleteMessagesBefore(c, folderName, before)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		totalDeleted += int64(numDeleted)
 		if err := bar.Add(1); err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
 
 	fmt.Printf("Total %d message deleted\n", totalDeleted)
+	return nil
 }
 
 // Queries a local email storage for all folders and messages therein
-func cmdLocalQuery() {
+func cmdLocalQuery() (err error) {
 	folderNames, err := GetLocalFolderNames(localStoragePath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	bar := pb.Default(int64(len(folderNames)), "Local list")
@@ -171,19 +241,19 @@ func cmdLocalQuery() {
 
 		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		defer lf.Close()
 
 		folders[i], err = lf.ReadAllIndex()
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		totalMsgs += uint32(len(folders[i].Messages))
 		totalSize += folders[i].Size
 
 		if err := bar.Add(1); err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
 
@@ -194,13 +264,14 @@ func cmdLocalQuery() {
 		fmt.Printf("|- %s (%d, %s)\n", f.Name, len(f.Messages), humanReadableSize(f.Size))
 	}
 	fmt.Println()
+	return nil
 }
 
 // Restores folders and messages therein from local storage to an IMAP server
-func cmdRestore(c *client.Client) {
+func cmdRestore(c *client.Client) (err error) {
 	folderNames, err := GetLocalFolderNames(localStoragePath)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 
 	bar := pb.Default(int64(len(folderNames)), "List")
@@ -215,13 +286,13 @@ func cmdRestore(c *client.Client) {
 
 		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		defer lf.Close()
 
 		folders[i], err = lf.ReadAllIndex()
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		totalMsgs += uint32(len(folders[i].Messages))
 		totalSize += folders[i].Size
@@ -229,16 +300,16 @@ func cmdRestore(c *client.Client) {
 		remFolders[i], err = NewImapFolderMeta(c, folderName)
 		if err != nil {
 			if !strings.HasPrefix(err.Error(), "Mailbox doesn't exist") {
-				log.Fatal(err)
+				return err
 			}
 			// create folder on IMAP server if it doesn't exist
 			err = c.Create(folderName)
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 			remFolders[i], err = NewImapFolderMeta(c, folderName)
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 		}
 		folders[i].Messages, folders[i].Size = folders[i].FilterOut(remFolders[i])
@@ -247,7 +318,7 @@ func cmdRestore(c *client.Client) {
 		filteredSize += folders[i].Size
 
 		if err := bar.Add(1); err != nil {
-			log.Fatal(err)
+			return err
 		}
 	}
 
@@ -268,13 +339,13 @@ func cmdRestore(c *client.Client) {
 
 		lf, err := OpenLocalFolderReadOnly(localStoragePath, f.Name)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		defer lf.Close()
 
 		for _, mm := range f.Messages {
 			if err := lf.ReadMessage(mm, msgBuffer); err != nil {
-				log.Fatal(err)
+				return err
 			}
 
 			l := msgBuffer.Len()
@@ -284,12 +355,12 @@ func cmdRestore(c *client.Client) {
 				log.Printf("Validity %d uid %d: Warning: Unable to parse received time, using dummy", mm.UidValidity, mm.Uid)
 			}
 			if err := c.Append(f.Name, nil, receivedTime, msgBuffer); err != nil { // then read the original here
-				log.Fatal(err)
+				return err
 			}
 			if err := bar.Add64(int64(l)); err != nil {
-				log.Fatal(err)
+				return err
 			}
 		}
 	}
-
+	return nil
 }

@@ -20,12 +20,12 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
-	"github.com/emersion/go-imap/client"
-	pb "github.com/schollz/progressbar/v3"
-	"golang.org/x/term"
 	"log"
 	"os"
 	"strings"
+	"time"
+
+	"golang.org/x/term"
 )
 
 // command line flag values
@@ -38,7 +38,10 @@ var restrictToFoldersSeparated string
 var restrictToFolderNames []string
 var months int
 var force bool
+var retries int
+var retryDelaySeconds int
 
+// initialize command line flags
 func init() {
 	flag.Usage = func() {
 		o := flag.CommandLine.Output()
@@ -61,25 +64,34 @@ func init() {
 	flag.IntVar(&months, "m", 24, "Age limit for deletion in months, must be non-negative")
 	flag.BoolVar(&force, "f", false, "Force deletion of older messages without confirmation prompt")
 	flag.StringVar(&restrictToFoldersSeparated, "r", "", "Restrict command to a comma-separated list of folders")
+	flag.IntVar(&retries, "R", 3, "Number of retries for failed operations")
+	flag.IntVar(&retryDelaySeconds, "d", 10, "Delay in seconds between retries")
 }
 
+// main program
 func main() {
 	// parse command-line arguments, and complete for local commands
 	flag.Parse()
 	args := flag.Args()
-	if len(args) != 1 || (args[0] != "query" && args[0] != "lquery" && args[0] != "backup" &&
-		args[0] != "restore" && args[0] != "delete") {
+	if len(args) != 1 {
 		flag.Usage()
-		return
+		os.Exit(1)
+	}
+	cmd := strings.ToLower(args[0])
+	if cmd != "query" && cmd != "lquery" && cmd != "backup" && cmd != "restore" && cmd != "delete" {
+		flag.Usage()
+		os.Exit(1)
 	}
 
 	// perform local command, if given
-	switch args[0] {
+	switch cmd {
 	case "lquery":
 		if err := completeFlagsLocal(); err != nil {
 			log.Fatal(err)
 		}
-		cmdLocalQuery()
+		if err := cmdLocalQuery(); err != nil {
+			log.Fatal(err)
+		}
 		return
 	}
 
@@ -88,62 +100,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Connect
-	bar := pb.Default(3, "Connect")
-	addr := fmt.Sprintf("%s:%d", server, port)
-	c, err := client.DialTLS(addr, nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer func() {
-		if err := c.Logout(); err != nil {
-			log.Fatal(err)
+	// perform remote command, with retries
+	for i := 0; i < retries; i++ {
+		if err := cmdRemote(cmd); err == nil {
+			log.Printf("Error on %d. attempt: %s\n", i, err)
+			time.Sleep(time.Duration(retryDelaySeconds) * time.Second)
+		} else {
+			fmt.Println("Done, exiting.")
+			return
 		}
-	}()
-	if err := bar.Add(1); err != nil {
-		log.Fatal(err)
 	}
-
-	// Login
-	bar.Describe("Login")
-	if err := c.Login(user, pass); err != nil {
-		log.Fatal(err)
-	}
-	if err := bar.Add(1); err != nil {
-		log.Fatal(err)
-	}
-
-	// List folders
-	bar.Describe("List folders")
-	folderNames, err := ListFolders(c)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if err := bar.Add(1); err != nil {
-		log.Fatal(err)
-	}
-
-	// Restrict if necessary
-	if len(restrictToFolderNames) > 0 {
-		folderNames = intersect(folderNames, restrictToFolderNames)
-	}
-
-	// Execute given command
-	switch args[0] {
-	case "query":
-		cmdQuery(c, folderNames)
-
-	case "backup":
-		cmdBackup(c, folderNames)
-
-	case "restore":
-		cmdRestore(c)
-
-	case "delete":
-		cmdDelete(c, folderNames)
-	}
-
-	fmt.Println("Done, exiting.")
+	fmt.Println("Too many errors, exiting.")
+	os.Exit(1)
 }
 
 // Validate command line flags for local commands, and prompt for missing parameters
@@ -206,7 +174,7 @@ func completeFlagsRemote() (err error) {
 	}
 
 	if months < 0 {
-		return fmt.Errorf("Months must be non-negative, is %d", months)
+		return fmt.Errorf("months must be non-negative, is %d", months)
 	}
 
 	restrictToFolderNames = strings.Split(restrictToFoldersSeparated, ",")
