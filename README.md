@@ -25,7 +25,8 @@ Flags must be given before the command. The available flags are:
 | -m    | Age limit for deletion in months, must be positive | 24 | 
 | -f    | Force deletion of older messages without confirmation prompt | false |
 | -r    | Restrict command to a comma-separated list of folders | (blank) | 
-
+| -R    | Number of retries for failed operations | 3 |
+| -d    | Delay in seconds between retries | 10 |
 
 ## Local storage
 
