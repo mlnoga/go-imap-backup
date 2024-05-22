@@ -214,7 +214,7 @@ func cmdHisto(c *client.Client, folderNames []string, numBins uint, binStrideByt
 			fmt.Printf("   >%6s: ", humanReadableSize(uint64((i)*int(binStrideBytes))))
 		}
 
-		// Print ASCII art bar chart of max width 60
+		// Print ASCII art bar chart of max width 50
 		for j := uint(0); j < (b*50)/maxBin; j++ {
 			fmt.Printf("█")
 		}
