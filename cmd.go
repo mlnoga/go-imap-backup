@@ -78,6 +78,10 @@ func cmdRemote(cmd string) (err error) {
 		_, _, _, err := cmdQuery(c, folderNames)
 		return err
 
+	case "histo":
+		_, err := cmdHisto(c, folderNames, 26, 20*1024)
+		return err
+
 	case "backup":
 		return cmdBackup(c, folderNames)
 
@@ -148,6 +152,78 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 	fmt.Println()
 
 	return folders, filteredMsgs, filteredSize, nil
+}
+
+// Queries an IMAP account for the contents of all folders with given names,
+// computes a histogram of message sizes. The histogram has numBins bins of
+// binStrideBytes bytes each, with the last bin serving as an "or larger" bin.
+// Disregards local folders. Returns histogram on success, or err on error.
+func cmdHisto(c *client.Client, folderNames []string, numBins uint, binStrideBytes uint) (bins []uint, err error) {
+	bins = make([]uint, numBins)
+	maxMsgSize := uint(0)
+
+	// Process all folders
+	totalMsgs, totalSize := 0, uint64(0)
+	bar := pb.Default(int64(len(folderNames)), "List")
+	for _, folderName := range folderNames {
+		bar.Describe("List " + folderName)
+
+		// Fetch metadata for all messages in the folder
+		var err error
+		f, err := NewImapFolderMeta(c, folderName)
+		if err != nil {
+			return nil, err
+		}
+
+		totalMsgs += len(f.Messages)
+		totalSize += f.Size
+
+		// Update histogram of message sizes
+		for _, m := range f.Messages {
+			bin := uint(m.Size) / binStrideBytes
+			if bin >= numBins {
+				bin = numBins - 1
+			}
+			bins[bin]++
+			if uint(m.Size) > maxMsgSize {
+				maxMsgSize = uint(m.Size)
+			}
+		}
+
+		if err := bar.Add(1); err != nil {
+			return nil, err
+		}
+	}
+
+	// calculate max bin value
+	maxBin := uint(0)
+	for _, val := range bins {
+		if val > maxBin {
+			maxBin = val
+		}
+	}
+
+	// Print overall message summary and histogram
+	fmt.Println()
+	fmt.Printf("%s/%s (%d messages, %s)\n", server, user, totalMsgs, humanReadableSize(totalSize))
+	fmt.Printf("Average message size is %s.\n", humanReadableSize(totalSize/uint64(totalMsgs)))
+	for i, b := range bins {
+		if i < len(bins)-1 {
+			fmt.Printf("  <=%6s: ", humanReadableSize(uint64((i+1)*int(binStrideBytes))))
+		} else {
+			fmt.Printf("   >%6s: ", humanReadableSize(uint64((i)*int(binStrideBytes))))
+		}
+
+		// Print ASCII art bar chart of max width 60
+		for j := uint(0); j < (b*50)/maxBin; j++ {
+			fmt.Printf("█")
+		}
+		fmt.Printf(" %d (%.1f%%)\n", b, 100*float64(b)/float64(totalMsgs))
+	}
+	fmt.Printf("Maximum message size is %s.\n", humanReadableSize(uint64(maxMsgSize)))
+	fmt.Println()
+
+	return bins, nil
 }
 
 // Backs up new messages in an IMAP account to the coresponding local storage.

@@ -47,6 +47,7 @@ func init() {
 		o := flag.CommandLine.Output()
 		fmt.Fprintln(o, "Usage: go-imap-backup [-flags] command, where command is one of:")
 		fmt.Fprintln(o, "  query:   fetch folder and message overview from IMAP server")
+		fmt.Fprintln(o, "  histo:   fetch folder and message overview, and calculate message size histogram")
 		fmt.Fprintln(o, "  lquery:  fetch folder and message metadata from local storage")
 		fmt.Fprintln(o, "  backup:  save new messages on IMAP server to local storage")
 		fmt.Fprintln(o, "  restore: restore messages from local storage to IMAP server")
@@ -78,7 +79,7 @@ func main() {
 		os.Exit(1)
 	}
 	cmd := strings.ToLower(args[0])
-	if cmd != "query" && cmd != "lquery" && cmd != "backup" && cmd != "restore" && cmd != "delete" {
+	if cmd != "query" && cmd != "lquery" && cmd != "histo" && cmd != "backup" && cmd != "restore" && cmd != "delete" {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -102,7 +103,7 @@ func main() {
 
 	// perform remote command, with retries
 	for i := 0; i < retries; i++ {
-		if err := cmdRemote(cmd); err == nil {
+		if err := cmdRemote(cmd); err != nil {
 			log.Printf("Error on %d. attempt: %s\n", i, err)
 			time.Sleep(time.Duration(retryDelaySeconds) * time.Second)
 		} else {
