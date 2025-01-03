@@ -120,8 +120,7 @@ func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta
 		// Check if local folder of this name exists
 		lf, err := OpenLocalFolderReadOnly(localStoragePath, folderName)
 		if err != nil {
-			if !(strings.HasSuffix(err.Error(), "The system cannot find the file specified.") ||
-				strings.HasSuffix(err.Error(), "The system cannot find the path specified.")) {
+			if !os.IsNotExist(err) {
 				return nil, 0, 0, err
 			}
 			// fallthrough if there is no local folder
