@@ -39,3 +39,6 @@ ldflags:
   - "-X main.Commit={{ .Env.COMMIT }}"
   - "-X main.CommitDate={{ .Env.COMMIT_DATE }}"
   - "-X main.TreeState={{ .Env.TREE_STATE }}"
+
+with:
+  compile-builder: true
