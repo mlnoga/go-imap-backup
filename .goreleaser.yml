@@ -27,9 +27,9 @@ builds:
 archives:
   - format: tar.gz
     # this name template makes the OS and Arch compatible with the results of uname.
-    name_template: >-
-      _
-      _Automating Go Project Releases with GitHub Actions_x86_64i386v
+    #name_template: >-
+    #  _
+    #  _Automating Go Project Releases with GitHub Actions_x86_64i386v
     # use zip for windows archives
     format_overrides:
     - goos: windows
