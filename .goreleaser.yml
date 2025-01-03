@@ -1,9 +1,6 @@
-# This is an example .goreleaser.yml file with some sensible defaults.
-# Make sure to check the documentation at https://goreleaser.com
 before:
   hooks:
     - go mod tidy
-    # you may remove this if you don't need go generate
     # - go generate ./...
 builds:
   - env:
@@ -21,11 +18,11 @@ builds:
     goarch:
       - amd64
       - arm64   
-     goamd64:
+    amd64:
+      - v2
       - v3
 archives:
   - format: tar.gz
-    # use zip for windows archives
     format_overrides:
     - goos: windows
       format: zip
