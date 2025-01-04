@@ -132,7 +132,7 @@ func (f *ImapFolderMeta) DownloadTo(c *client.Client, lf *LocalFolder, bar *pb.P
 		}
 
 		var env string
-		if len(msg.Envelope.From)>0 {
+		if len(msg.Envelope.From) > 0 {
 			env = msg.Envelope.From[0].Address()
 		}
 		date := msg.Envelope.Date
