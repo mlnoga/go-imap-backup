@@ -41,6 +41,9 @@ var force bool
 var retries int
 var retryDelaySeconds int
 
+// detect if stdout is a terminal (display progress indicators only then)
+var isTerminal = term.IsTerminal(int(os.Stdout.Fd()))
+
 // initialize command line flags
 func init() {
 	flag.Usage = func() {

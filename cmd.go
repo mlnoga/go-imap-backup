@@ -32,7 +32,7 @@ import (
 // performs the remote command given by cmd
 func cmdRemote(cmd string) (err error) {
 	// Connect
-	bar := pb.Default(3, "Connect")
+	bar := pb.NewOptions(3, pb.OptionSetDescription("Connect"), pb.OptionSetVisibility(isTerminal))
 	addr := fmt.Sprintf("%s:%d", server, port)
 	c, err := client.DialTLS(addr, nil)
 	if err != nil {
@@ -101,7 +101,7 @@ func cmdRemote(cmd string) (err error) {
 // Returns a list of folders with the filtered messages therein, or err on error.
 func cmdQuery(c *client.Client, folderNames []string) (folders []*ImapFolderMeta, filteredMsgs int, filteredSize uint64, err error) {
 	// Process all folders
-	bar := pb.Default(int64(len(folderNames)), "List")
+	bar := pb.NewOptions64(int64(len(folderNames)), pb.OptionSetDescription("List"), pb.OptionSetVisibility(isTerminal))
 	folders = make([]*ImapFolderMeta, len(folderNames))
 	totalMsgs, totalSize := 0, uint64(0)
 	for i, folderName := range folderNames {
@@ -163,7 +163,7 @@ func cmdHisto(c *client.Client, folderNames []string, numBins uint, binStrideByt
 
 	// Process all folders
 	totalMsgs, totalSize := 0, uint64(0)
-	bar := pb.Default(int64(len(folderNames)), "List")
+	bar := pb.NewOptions64(int64(len(folderNames)), pb.OptionSetDescription("List"), pb.OptionSetVisibility(isTerminal))
 	for _, folderName := range folderNames {
 		bar.Describe("List " + folderName)
 
@@ -237,7 +237,7 @@ func cmdBackup(c *client.Client, folderNames []string) (err error) {
 	}
 
 	// Download and append any new messages to local folder storage
-	bar := pb.DefaultBytes(int64(filteredSize), "Download")
+	bar := pb.NewOptions64(int64(filteredSize), pb.OptionSetDescription("Download"), pb.OptionShowBytes(true), pb.OptionSetVisibility(isTerminal))
 	for _, f := range folders {
 		if len(f.Messages) == 0 {
 			continue
@@ -282,7 +282,7 @@ func cmdDelete(c *client.Client, folderNames []string) (err error) {
 		}
 	}
 
-	bar := pb.Default(int64(len(folderNames)), "Delete")
+	bar := pb.NewOptions64(int64(len(folderNames)), pb.OptionSetDescription("Delete"), pb.OptionSetVisibility(isTerminal))
 	totalDeleted := int64(0)
 	for _, folderName := range folderNames {
 		bar.Describe("Delete " + folderName)
@@ -307,7 +307,7 @@ func cmdLocalQuery() (err error) {
 		return err
 	}
 
-	bar := pb.Default(int64(len(folderNames)), "Local list")
+	bar := pb.NewOptions64(int64(len(folderNames)), pb.OptionSetDescription("Local list"), pb.OptionSetVisibility(isTerminal))
 	folders := make([]*ImapFolderMeta, len(folderNames))
 	totalMsgs, totalSize := uint32(0), uint64(0)
 
@@ -349,7 +349,7 @@ func cmdRestore(c *client.Client) (err error) {
 		return err
 	}
 
-	bar := pb.Default(int64(len(folderNames)), "List")
+	bar := pb.NewOptions64(int64(len(folderNames)), pb.OptionSetDescription("List"), pb.OptionSetVisibility(isTerminal))
 	folders := make([]*ImapFolderMeta, len(folderNames))
 	remFolders := make([]*ImapFolderMeta, len(folderNames))
 	totalMsgs, totalSize := uint32(0), uint64(0)
@@ -407,7 +407,7 @@ func cmdRestore(c *client.Client) (err error) {
 	fmt.Println()
 
 	// Upload any new messages to IMAP server
-	bar = pb.DefaultBytes(int64(filteredSize), "Upload")
+	bar = pb.NewOptions64(int64(filteredSize), pb.OptionSetDescription("Upload"), pb.OptionShowBytes(true), pb.OptionSetVisibility(isTerminal))
 	msgBuffer := &bytes.Buffer{}
 	for _, f := range folders {
 		bar.Describe("Upload " + f.Name)
