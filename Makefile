@@ -1,4 +1,11 @@
-TARGET=go-imap-backup.exe
+# Set target based on platform
+OS := $(shell uname -s)
+ifeq ($(OS), Windows_NT)
+    TARGET = go-imap-backup.exe
+else
+    TARGET = go-imap-backup
+endif
+
 
 all: $(TARGET)
 
