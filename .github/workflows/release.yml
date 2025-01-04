@@ -23,7 +23,7 @@ jobs:
         uses: actions/setup-go@v4
 
       - name: Set up Syft (for SBOMs)
-        uses: anchore/sbom-action/download-syft
+        uses: anchore/sbom-action/download-syft@v0.17.9
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
