@@ -2,8 +2,10 @@ name: Release Go project
 
 on:
   push:
+    branches:
+      - "main"
     tags:
-      - "*"
+      - "v*"
 
 permissions:
   contents: write
@@ -20,13 +22,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
 
-      # - run: go build -v
+      - name: Set up Syft (for SBOMs)
+        uses: anchore/sbom-action/download-syft
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v5
         with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
           version: latest
           args: release --clean
         env:
-          GITHUB_TOKEN: $
+          GITHUB_TOKEN: ${{ github.token }}

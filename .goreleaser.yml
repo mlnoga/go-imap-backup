@@ -22,17 +22,33 @@ builds:
       - v1
       - v2
       - v3
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+          - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{ .CommitDate }} -X main.builtBy=goreleaser -X main.treeState={{ .IsGitDirty }}
+    
 archives:
   - format: tar.gz
     format_overrides:
     - goos: windows
       format: zip
+    builds_info:
+      group: root
+      owner: root
+      mtime: "{{ .CommitDate }}"
 checksum:
   name_template: 'checksums.txt'
 sboms:
   - artifacts: archive
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^test:"
+      - "^test\\("
+      - "merge conflict"
+      - Merge pull request
+      - Merge remote-tracking branch
+      - Merge branch
+      - go mod tidy
 report_sizes: true
-release:
-  github:
-    owner: mlnoga
-    name: go-imap-backup
